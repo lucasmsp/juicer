@@ -51,7 +51,7 @@ class DataReaderOperation(Operation):
     LIMONERO_TO_PANDAS_DATA_TYPES = {
         "CHARACTER": 'object',
         "DATETIME": 'object',
-        "DATE": 'datetime.date',
+        "DATE": 'object',
         "DOUBLE": 'np.float64',
         "DECIMAL": 'np.float64',
         "FLOAT": 'np.float64',
@@ -144,7 +144,7 @@ class DataReaderOperation(Operation):
             names = []
             for attr in attrs:
                 names.append(attr['name'])
-                if attr['type'] == 'DATETIME':
+                if attr['type'] in ['DATETIME', 'DATE']:
                     parse_dates.append(attr['name'])
                 # elif attr['type'] == 'DECIMAL':
                     #    converters[attr['name']] = 'decimal.Decimal'
@@ -238,10 +238,9 @@ class DataReaderOperation(Operation):
         {%- if protect %}
         f = open('{{parsed.path.split('/')[-1]}}', 'rb')
         {%- elif parsed.scheme == 'hdfs'  %}
-        fs = pa.hdfs.connect(host='{{parsed.hostname}}', 
-            port={{parsed.port}},
-            user='{{extra_params.get('user', parsed.username) or 'hadoop'}}')
-        f = fs.open('{{parsed.path}}', 'rb')
+        fs = hdfs.HadoopFileSystem('{{parsed.hostname}}', {{parsed.port}}, 
+           user='{{extra_params.get('user', parsed.username) or 'hadoop'}}')
+        f = fs.open_input_file('{{parsed.path}}')
         {%- elif parsed.scheme == 'file' %}
         f = open('{{parsed.path}}', 'rb')
         {%- endif %}
@@ -260,8 +259,7 @@ class DataReaderOperation(Operation):
                                  converters = None,
                                  dtype='str',
                                  {%-   endif %}
-                                 na_values={{na_values}},
-                                 error_bad_lines={{mode_failfast}})
+                                 na_values={{na_values}})
         f.close()
         {%-   if header == 'infer' %}
         {{output}}.columns = ['attr{{i}}'.format(i=i) 
@@ -430,10 +428,9 @@ class SaveOperation(Operation):
         self.template = """
             path = '{{path}}'
             {%- if scheme == 'hdfs' and not protect %}
-            fs = pa.hdfs.connect(host='{{hdfs_server}}', 
-                                 port={{hdfs_port}},
-                                 user='{{hdfs_user}}')
-            exists = fs.exists(path)
+            fs = hdfs.HadoopFileSystem('{{parsed.hostname}}', {{parsed.port}}, 
+               user='{{extra_params.get('user', parsed.username) or 'hadoop'}}')
+            exists = fs.get_file_info(path).type.value == 2
             {%- elif scheme == 'file' or protect %}
             exists = os.path.exists(path)
             {%- endif %}
@@ -451,7 +448,7 @@ class SaveOperation(Operation):
                         identifier='{{task_id}}')
                 else:
                     {%- if scheme == 'hdfs' and not protect %}
-                        fs.delete(path, False)
+                        fs.delete_file(path)
                     {%- elif scheme == 'file' or protect %}
                         os.remove(path)
                         parent_dir = os.path.dirname(path)
@@ -460,7 +457,7 @@ class SaveOperation(Operation):
                     {%- endif %}
             else:
                 {%-if scheme == 'hdfs' and not protect %}    
-                fs.mkdir(os.path.dirname(path))
+                fs.create_dir(os.path.dirname(path))
                 {%- elif scheme == 'file' %}
                 parent_dir = os.path.dirname(path)
                 os.makedirs(parent_dir)
@@ -471,7 +468,7 @@ class SaveOperation(Operation):
             {%- if format == FORMAT_CSV %}
             {%- if scheme == 'hdfs' and not protect %}
             from io import StringIO
-            with fs.open(path, 'wb') as f:
+            with fs.open_output_stream(path) as f:
                 s = StringIO()
                 {{input}}.to_csv(s, sep=str(','), mode='w',
                 header={{header}}, index=False, encoding='utf-8')

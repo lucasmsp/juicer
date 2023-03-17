@@ -746,14 +746,14 @@ class JoinOperation(Operation):
     def generate_code(self):
         if self.has_code:
             code = """
-            cols1 = [ c + '{suf_l}' for c in {in1}.columns]
-            cols2 = [ c + '{suf_r}' for c in {in2}.columns]
+            cols1 = [ '{suf_l}' + c for c in {in1}.columns]
+            cols2 = [ '{suf_r}' + c for c in {in2}.columns]
             
             {in1}.columns = cols1
             {in2}.columns = cols2
             
-            keys1 = [c + '{suf_l}' for c in {keys1}]
-            keys2 = [c + '{suf_r}' for c in {keys2}]
+            keys1 = ['{suf_l}' + c for c in {keys1}]
+            keys2 = ['{suf_r}' + c  for c in {keys2}]
             """.format(in1=self.named_inputs['input data 1'],
                        in2=self.named_inputs['input data 2'],
                        suf_l=self.suffixes[0], suf_r=self.suffixes[1],

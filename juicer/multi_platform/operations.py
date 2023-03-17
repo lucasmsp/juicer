@@ -1041,6 +1041,13 @@ class IsotonicRegressionOperationModel(GenericOperationModel):
 
 
 class JoinOperationModel(OperationModel):
+
+    KEEP_RIGHT_KEYS_PARAM = 'keep_right_keys'
+    MATCH_CASE_PARAM = 'match_case'
+    JOIN_TYPE_PARAM = 'join_type'
+    LEFT_ATTRIBUTES_PARAM = 'left_attributes'
+    RIGHT_ATTRIBUTES_PARAM = 'right_attributes'
+
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
         self.spark = ['features']
@@ -1049,18 +1056,124 @@ class JoinOperationModel(OperationModel):
         self.data_amplification = 0.9
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_EQ
 
-    def convert(self, parameters):
-        if "value" in parameters.get("alias", {}):
-            parameters["alias"] = parameters["alias"]["value"]
-
-        #parameters["join_type"] = parameters["join_type"]["value"]
-    #     #     parameters["aliases"] = parameters["aliases"]["value"]
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+        parameters["aliases"] = self.parameters["aliases"]["value"]
+        parameters[self.JOIN_TYPE_PARAM] = self.parameters[self.JOIN_TYPE_PARAM]["value"]
+        parameters[self.LEFT_ATTRIBUTES_PARAM] = self.parameters[self.LEFT_ATTRIBUTES_PARAM]["value"]
+        parameters[self.RIGHT_ATTRIBUTES_PARAM] = self.parameters[self.RIGHT_ATTRIBUTES_PARAM]["value"]
         return parameters
 
     def extract_features(self):
         self.features["freq"] += 1
         self.features["data_amplification"] = [self.data_amplification]
         return self.features
+
+    
+    def estimate_output(self, base_statistics):
+        self.input1 = copy.deepcopy(base_statistics[0])
+        self.input2 = copy.deepcopy(base_statistics[1])
+
+        parameters = self.convert()
+        # Por enquanto só considero KEEP_RIGHT_KEYS_PARAM como false
+        cols_output = []
+
+        suffixes = parameters.get('aliases', '_l,_r')
+        suffixes = [s for s in suffixes.replace(" ", "").split(',')]
+        
+        cols1 = [ suffixes[0] + c for c in self.input1.columns]
+        cols2 = [ suffixes[1] + c for c in self.input2.columns]
+
+        left_attributes =  [ suffixes[0] + c for c in parameters.get(self.LEFT_ATTRIBUTES_PARAM)]
+        right_attributes = [ suffixes[1] + c for c in parameters.get(self.RIGHT_ATTRIBUTES_PARAM)]
+        self.n_keys = len(left_attributes)
+        join_type = parameters.get(self.JOIN_TYPE_PARAM, 'inner')\
+                .replace("_outer", "") 
+
+        def getOverlap(a, b):
+            return max(a[0], b[0]), min(a[1], b[1])
+
+        if join_type == "left":
+            n_rows = self.input1.n_rows
+            self.join_type = 0
+            
+
+        elif join_type == "right":
+            n_rows = self.input2.n_rows
+            self.join_type = 0
+
+        elif join_type == "inner":
+            self.join_type = 1
+            # n_rows = self.input1.n_rows * self.input2.n_rows
+            for l, r in zip(parameters.get(self.LEFT_ATTRIBUTES_PARAM), 
+                            parameters.get(self.RIGHT_ATTRIBUTES_PARAM)):
+                
+                if self.input1.columns[l].is_number():
+                    # distinct_factor_l = (self.input1.columns[l].distinct_values) / \
+                    #     (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total) 
+                        
+                    # distinct_factor_r = (self.input2.columns[r].distinct_values) / \
+                    #     (self.input2.columns[r].n_rows - self.input2.columns[r].missing_total)
+                
+                    interval_overlap = getOverlap(
+                        [float(self.input1.columns[l].min_value), float(self.input1.columns[l].max_value)],
+                        [float(self.input2.columns[r].min_value), float(self.input2.columns[r].max_value)]
+                    )
+
+                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap)
+                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap)
+
+                else:
+                    distinct_factor_l = (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total)
+                     # / (self.input1.columns[l].distinct_values)
+
+                    distinct_factor_r = (self.input2.columns[r].n_rows - self.input2.columns[r].missing_total) 
+                    # /  (self.input2.columns[r].distinct_values)
+
+                n_rows =  max([distinct_factor_l, distinct_factor_r])
+
+        else:
+            raise Exception("Join Type not supported.")
+        
+    
+        self.output = BaseStatistics(n_rows=n_rows)
+
+        for i_col, o_col in zip(self.input1.columns, cols1):
+            lemonade_col = self.input1.columns[i_col]
+            lemonade_col.name = o_col
+            if n_rows < lemonade_col.n_rows:
+                diff = lemonade_col.n_rows - n_rows
+                lemonade_col.remove_n_rows(diff)
+            elif n_rows > lemonade_col.n_rows:
+                lemonade_col.n_rows = n_rows
+        
+            self.output.columns[o_col] = lemonade_col
+
+        for i_col, o_col in zip(self.input2.columns, cols2):
+            lemonade_col = self.input2.columns[i_col]
+            lemonade_col.name = o_col
+            if n_rows < lemonade_col.n_rows:
+                diff = lemonade_col.n_rows - n_rows
+                lemonade_col.remove_n_rows(diff)
+            elif n_rows > lemonade_col.n_rows:
+                lemonade_col.n_rows = n_rows
+        
+            self.output.columns[o_col] = lemonade_col
+
+
+        self.output.recalculate()
+          
+        return [self.output]
+
+    def gen_model(self):
+        return {
+            "input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
+            "output_size_bytes_memory": self.output.size_bytes_memory,
+            "n_columns": self.output.n_columns,
+            "join_type": self.join_type,
+            'n_keys': self.n_keys,
+            "platform_id": self.platform_target
+        }
 
 
 class KMeansClusteringOperationModel(OperationModel):

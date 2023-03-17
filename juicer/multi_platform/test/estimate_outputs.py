@@ -14,7 +14,8 @@ import copy
 from juicer.multi_platform.limonero_api import Dataset
 from juicer.multi_platform.operations import AddRowsOperationModel, AggregationOperationModel, \
     AddColumnsOperationModel, SortOperationModel, ProjectionOperationModel, ReplaceValueOperationModel,\
-    CleanMissingOperationModel, SVMClassificationOperationModel, TransformationOperationModel, FilterSelectionOperationModel
+    CleanMissingOperationModel, SVMClassificationOperationModel, TransformationOperationModel,\
+    FilterSelectionOperationModel, JoinOperationModel
 
 df1 = Dataset(3391).stats
 
@@ -135,3 +136,24 @@ def _test_filter():
     print("Columns: ", out[0].columns)
     print("Model: ", op1.gen_model()) 
     return out[0]
+
+
+def _test_join():
+    print("# _test_join")
+    op1 = JoinOperationModel({"operation_id": 1, 
+        "left_attributes": {"value": ["passengerid"]}, 
+        "right_attributes": {"value": ["passengerid"]}, 
+        "join_type": {"value": "inner", "labelValue": "Inner join"}, 
+        "match_case": {"value": "1"}, 
+        "aliases": {"value": "l_,r_"}
+    })
+    print("Input: ", df1)
+    out = op1.estimate_output([df1, df1])
+    
+    print("Output: ",out[0])
+    print("Columns: ", out[0].columns)
+    print("Model: ", op1.gen_model()) 
+    return out[0]
+
+
+

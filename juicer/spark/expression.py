@@ -196,7 +196,7 @@ class Expression(object):
 
         return result
 
-    def get_function_call(self, spec, params):
+    def get_function_call(self, spec, params, alias=None):
         """
         Wrap column name with col() function call, if such call is not present.
         """
@@ -205,8 +205,11 @@ class Expression(object):
         arguments = ', '.join(
             [self.parse(x, params) for x in spec['arguments']])
 
-        result = 'functions.{}({})'.format(spec['callee']['name'],
-                                           arguments)
+        if alias:
+            result = 'functions.{}({})'.format(alias, arguments)
+        else:
+            result = 'functions.{}({})'.format(spec['callee']['name'],
+                                               arguments)
         return result
 
     def get_function_call_with_columns(self, spec, params):
@@ -417,6 +420,7 @@ class Expression(object):
             'upper': self.get_function_call,
             'weekofyear': self.get_function_call,
             'year': self.get_function_call,
+            'timestamp': lambda s, p: self.get_function_call(s, p, 'lit')
         }
 
         # Functions that does not exist on Spark, but can be implemented in

@@ -462,9 +462,7 @@ class Expression:
         translate_functions = {
 
             'timedelta': 'datetime.timedelta',
-
             'str2time': 'parser.parse',
-
             'date': 'datetime.date',
             'today': 'date.today',
             'now': 'datetime.now',
@@ -527,6 +525,7 @@ class Expression:
         # lambda function. For now, and due simplicity, we require that every
         # custom function is necessarily defined here.
         others_functions = {
+            'timestamp': lambda s, p: self.get_function_call(s, p, 'pd.Timestamp'),
             'group_datetime': self.get_window_function,
             'strip_accents': self.get_strip_accents_function,
             'strip_punctuation': self.get_strip_punctuation_function,

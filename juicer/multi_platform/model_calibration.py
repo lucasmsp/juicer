@@ -37,7 +37,7 @@ def log(msg):
         print(msg)
 
 CONFIG_FILE = "/mnt/lucasmsp/juicer/juicer-config-local.yaml"
-MODELS_PATH = "/mnt/lucasmsp/models.pickle"
+MODELS_PATH = "/mnt/lucasmsp/thesis/models/models.pickle"
 
 class CostModel(object):
 
@@ -255,70 +255,6 @@ class CostModel(object):
         result["duration"] = duration
         print("where_to_run: ", result)
         return result
-
-#     def gen_test_dataflow(self, mode="break-by-stages"):
-#         current_job_id = 0
-#         lemonade_jobs = []
-#         ids = []
-#         while current_job_id <= self.last_job_id:
-
-#             current_job = get_job(self.connection, current_job_id)
-#             if current_job_id % 1000 == 0:
-#                 print("It: ", current_job_id)
-
-#             if current_job:
-#                 lj = None
-#                 try:
-#                     workflow = json.loads(current_job["workflow_definition"])
-#                     lj = LemonadeJob(workflow, self.actions_ids,
-#                                      self.juicer_config, self.operation_slugs, mode=mode)
-#                     lemonade_jobs.append(lj)
-#                     ids.append(current_job_id)
-#                 except Exception as e:
-#                     pass
-#                     #print(traceback.format_exc())
-#                     #print(str(e) + "- Lemonade_id: {}".format(current_job_id))
-#             current_job_id += 1
-
-#         print("Terminou de carregar os workflows!")
-
-#         tmp = []
-#         for lj, idx in zip(lemonade_jobs, ids):
-#             try:
-#                 for d in lj.get_dataflow("v4"):
-#                     tmp.append([idx] + d)
-#             except Exception as e:
-#                 print(str(e))
-
-#         print("Terminou de get_datafflow!")
-#         dataflow = []
-#         rows = []
-#         operations_idx = 9+1
-#         opmodeling = OperationModeling()
-#         for r in tmp:
-#             dataflow.append([r[i] for i in range(operations_idx)])
-#             for key in list(r[operations_idx].keys()):
-#                 ml_operation = r[operations_idx][key]
-#                 if isinstance(ml_operation, dict):
-
-#                     del r[operations_idx][key]
-#                     for key2 in ml_operation:
-#                         r[operations_idx]["{}_{}".format(opmodeling.clean_slug(key), key2)] = ml_operation[key2]
-
-#             rows.append(r[operations_idx])
-
-#         rows = pd.DataFrame.from_dict(rows)
-#         dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "test_id", "job_order", "job_parents",
-#                                                    "total_seconds", "platform_id", "n_cores", "memory_ram",
-#                                                    "input_size", "expected_output"])
-#         dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
-#         dataflow = dataflow.fillna(0)
-#         dataflow = dataflow.loc[dataflow["not-supported"] < 1.0]
-#         dataflow = dataflow.drop(["data_amplification", "not-supported"], axis=1)
-
-#         return dataflow
-
-
 
 #def main():
 #    return CostModel()

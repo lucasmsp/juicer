@@ -22,6 +22,7 @@ import pandas as pd
 import datetime
 from gettext import gettext
 from juicer.multi_platform.auxiliar_services import get_sql_connection
+from bisect import bisect
 
 # LIBRARY_PATH = os.path.expanduser("/home/lucasmsp/workspace/bigsea/docker-lemonade/juicer/")
 # sys.path.insert(0, LIBRARY_PATH)
@@ -271,6 +272,56 @@ class LemonadeColumn(object):
         
         self.n_rows -= r2
 
+    def get_bin_to_value(self, v1, mode="equals"):
+        if self.deciles:
+            deciles_keys = sorted(list(self.deciles.keys()))
+            greater = []
+            equals = []
+            lesser = []
+
+            for i, v in enumerate(deciles_keys):
+                if v >= v1:
+                    greater.append(i)
+                    if len(equals) == 0:
+                        equals.append(i)
+                else:
+                    lesser.append(i)
+
+            if mode == "equals":
+                return equals
+            elif mode == "greater":
+                return greater
+            else:
+                return lesser
+        else:
+            return None
+        
+    def get_elements_interval(self, overlap_interval):
+        if self.deciles:
+
+            tmp = {}
+            # filtrando elementos menores que o máximo
+            for k in sorted(list(self.deciles.keys()), reverse=True):
+                if k < overlap_interval[1]:
+                    tmp[k] = self.deciles[k]
+            idx = 0
+            for i, k in enumerate(sorted(list(tmp.keys()))):
+                if k > overlap_interval[0]:
+                    idx = i
+                    break
+        
+            for i, k in enumerate(sorted(list(tmp.keys()))):
+                if i < idx:
+                    del tmp[k]
+
+            value = sum([tmp[k] for k in tmp])
+            return value
+        else:
+            return self.n_rows
+
+            
+                
+
 
 class LimoneroCalibration(object):
 
@@ -382,20 +433,28 @@ class LimoneroCalibration(object):
                     .toPandas() \
                     .to_dict(orient="records")[0]
 
+                # Computes specified statistics for numeric and string columns.
                 summary = df.summary().toPandas().set_index("summary").T.to_dict(orient='index')
                 dtypes = {k: v for k, v in df.dtypes}
+
                 for c in df.columns:
                     col_type = dtypes[c]
-
-                    min_value = summary[c]['min']
-                    max_value = summary[c]['max']
+                    
+                    if c in summary:
+                        min_value = summary[c]['min']
+                        max_value = summary[c]['max']
+                    else:
+                        min_value = "NULL"
+                        max_value = "NULL"
+                        
                     mean = "NULL"
                     std_deviation = "NULL"
                     deciles = "NULL"
                     median = 'NULL'
+                    missing_total = 0
 
                     # TODO !!!
-                    if dtypes[c] not in ["string"]:
+                    if (dtypes[c] not in ["string"]) and (c in summary):
                         median = summary[c]['50%']
 
                         if summary[c]['mean'] not in [None, "NaN", "Infinity"]:
@@ -425,9 +484,11 @@ class LimoneroCalibration(object):
 
                         deciles = {bucket_range[i + 1]: freq.get(i) for i in freq}
                         deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
-
+    
+                        missing_total = estimated_rows - int(summary[c]['count'])
+    
                     stats[datasource_id]['attribute'][c] = {'distinct_values': distinct_values[c],
-                                                            'missing_total': estimated_rows - int(summary[c]['count']),
+                                                            'missing_total': missing_total,
                                                             'mean': mean,
                                                             'min': min_value,
                                                             'max': max_value,
