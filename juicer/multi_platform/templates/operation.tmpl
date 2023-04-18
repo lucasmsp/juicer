@@ -72,6 +72,17 @@ import traceback
 def sklearn_logging(msg):
     print(msg)
 
+def migrate_data(task_id, data, target_platform, spark_session, emit_event):
+    if (target_platform == 4) and hasattr(data, 'toPandas'):
+        data = data.toPandas()
+        emit_event(name='update task', message=_('Data was converted from Spark\'s DataFrame to Pandas.'),
+                   identifier=task_id, status='RUNNING')
+    elif (target_platform == 1) and isinstance(data, pd.DataFrame):
+        data = spark_session.createDataFrame(data)
+        emit_event(name='update task', message=_('Data was converted from Pandas\'s DataFrame to Spark.'),
+                   identifier=task_id, status='RUNNING')
+    return data
+
 executor = ThreadPoolExecutor(max_workers=3*{{instances|length}})
 submission_lock = threading.Lock()
 task_futures = {}
@@ -104,10 +115,11 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
     {%- set parents = transpiler._get_parent_tasks(instances_by_task_id, instance) %}
     {%- for parent_id, method in parents %}
     parent_id = '{{parent_id}}'
-    with submission_lock:
-        if parent_id not in task_futures:
-            task_futures[parent_id] = executor.submit(
-                    lambda: {{method}}(spark_session, cached_state, emit_event))
+    submission_lock.acquire()
+    if parent_id not in task_futures:
+        task_futures[parent_id] = executor.submit(
+                lambda: {{method}}(spark_session, cached_state, emit_event))
+    submission_lock.release()
     {%- endfor %}
     {%- endif %}
 
@@ -120,17 +132,7 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
     {%- for port_name,out in zip(parent_instance.parameters.task.port_names, parent_instance.get_output_names(',').split(','))%}
     {{out}} = parent_result['{{port_name}}']
     # --- Begin data migration --- #
-    {%- if target_platform == 4 %}
-    if isinstance({{out}}, DataFrame):
-        {{out}} = {{out}}.toPandas()
-        emit_event(name='update task', message=_('Data was converted from Spark\'s DataFrame to Pandas.'),
-                   identifier=task_id, status='RUNNING')
-    {%- elif target_platform == 1 %}
-    if isinstance({{out}}, pd.DataFrame):
-        {{out}} = spark_session.createDataFrame({{out}})
-        emit_event(name='update task', message=_('Data was converted from Pandas\'s DataFrame to Spark.'),
-                   identifier=task_id, status='RUNNING')
-    {%- endif %}
+    {{out}} = migrate_data(task_id, {{out}}, target_platform, spark_session, emit_event)
     # --- End data migration --- #
     {%- endfor %}
     ts_{{parent_instance.output}} = parent_result['time']

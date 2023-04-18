@@ -663,10 +663,12 @@ class LemonadeJob(object):
     def _gen_dataflow_v5(self):
 
         task_orders = self.find_jobs_order()
-        operations_idx = 8
+
+        scenario_idx = 8        
+        operations_idx = 9
         job_parent_idx = 2
-        time_idx = 3
-        scenario_idx = 7
+        time_idx = 4
+        task_idx = 3
 
         dataflow = [0 for _ in range(len(self.jobs))]
         if self.cluster:
@@ -688,7 +690,8 @@ class LemonadeJob(object):
             dataflow[order_job] = [self.job_id,                             # job id
                                    order_job+1,                             # job_order
                                    "",                                      # job_parent
-                                   -1,  # time in seconds
+                                   "",                                      # task_id
+                                   -1,                                      # time in seconds
                                    self.platform,                           # platform_id
                                    n_cores,                                 # number of avaliable cores
                                    ram,                                     # available RAM
@@ -703,9 +706,11 @@ class LemonadeJob(object):
                 if "action" in t:
                     self.jobs[job_id]["action"] = self.graph.nodes[t]['task_id']
 
-            for task_id in sorted_tasks:
+            for i, task_id in enumerate(sorted_tasks):
                 task = self.graph.nodes[task_id]
                 slug = task.get("operation", {"slug": None})["slug"]
+                
+                dataflow[order_job][task_idx] = sorted_tasks[i-1]
 
                 if slug:
                     db = None
@@ -723,6 +728,7 @@ class LemonadeJob(object):
                         # dataflow[order_job][size_idx][base_id] = db
                         new_dfs = operation.estimate_output([db.stats])
                         self.df_states[task_id] = new_dfs
+                        self.graph.nodes[task_id]["model"] = new_dfs
                     else:
                         dfs = []
                         try:
@@ -736,26 +742,17 @@ class LemonadeJob(object):
                             print(sorted_tasks)
                             print(self.jobs)
                             raise e
-                            
+                        
                         # TODO: suporte ao split
                         # TODO: manter ordem {"input1 ..."}
                         new_dfs = operation.estimate_output(dfs)
                         self.df_states[task_id] = new_dfs
+                        self.graph.nodes[task_id]["model"] = new_dfs
 
                     
                     dataflow[order_job][operations_idx][slug] = operation
                     dataflow[order_job][scenario_idx] = slug
 
-        # for row, job_id in enumerate(task_orders):
-        #     for tasks_id in self.jobs[job_id]["tasks"]:
-        #         if "job-" in tasks_id:
-        #             recent_parent = self.jobs[tasks_id]["order"]
-        #             dataflow[row][job_parent_idx] += str(recent_parent + 1)+"_"
-                    # for k, v in dataflow[recent_parent][output_size_idx].items():
-                    #     dataflow[row][size_idx][k] = v
-
-            #dataflow[row][output_size_idx] = self.calculate_outcome_v4(dataflow[row][size_idx],
-            #                                                           dataflow[row][operations_idx])
         return dataflow
 
 
@@ -777,6 +774,7 @@ class HistoricalLemonadeJob(LemonadeJob):
         self.finished_timestamp = stand["finished"]
         self.started_timestamp = min([j["l_date"] for j in self.job_log])
         self.seconds_to_start = (self.started_timestamp - self.scheduled_timestamp).total_seconds()
+        self.real_time = (self.finished_timestamp - self.started_timestamp).total_seconds()
 
         self.original_transpiler = self.get_transpiler(self.platform)  # TODO
         self._inflate_jobs_info()
@@ -829,46 +827,13 @@ class HistoricalLemonadeJob(LemonadeJob):
                         self.get_timestamps(job_id, offset)
                         jobs_inflated.append(job_id)
 
-    def _get_timestamp_as_spark(self, job_id, offset=0):
-
-        tasks = self.jobs[job_id]["tasks"]
-
-        # Spark's lazy-evaluation
-        # timestamps2 = []
-        # for task in tasks:
-        #     for task2 in self.job_log:
-        #         if task == task2["task_id"]:
-        #             timestamps2.append(task2['l_date'])
-        #
-        # # TODO: fix it!
-        # if len(timestamps2) == 0:
-        #     timestamps2.append(self.finished_timestamp)
-        #
-        # self.jobs[job_id]["max_scheduled_timestamp"] = max(timestamps2)
-        # self.jobs[job_id]["min_scheduled_timestamp"] = min(timestamps2)  # no sklearn tem mais info
-        #
-        # duration = (self.jobs[job_id]["max_scheduled_timestamp"] -
-        #             self.jobs[job_id]["min_scheduled_timestamp"]).total_seconds() - offset
-
-        duration = 0.0
-        for task in tasks:
-            if "job" not in task and "action" not in task:
-                duration += self._get_duration_task(task)
-
-        if duration >= 0.0:
-            duration -= offset
-            if duration <= 0.0:
-                duration = 0.01
-
-        return duration
-
-    def _get_duration_task(self, task):
+    def _get_duration_task(self, task_id):
         s1 = None
         s2 = None
 
         for task2 in self.job_log:
-            if task == task2["task_id"]:
-                if task2["l_status"] == "RUNNING":
+            if task_id == task2["task_id"]:
+                if (task2["l_status"] == "RUNNING") and ("converted" not in task2['message']):
                     if s1:
                         s1 = min([s1, task2['l_date']])
                     else:
@@ -896,30 +861,26 @@ class HistoricalLemonadeJob(LemonadeJob):
         """
         tasks = self.jobs[job_id]["tasks"]
 
-        # timestamps2 = []
-        # for task in tasks:
-        #     for task2 in self.job_log:
-        #         if task == task2["task_id"]:
-        #             timestamps2.append(task2['l_date'])
-        #
-        # # Sao casos como:
-        # # Task completed, but not executed (not used in the workflow).
-        # # Tarefa completada, mas não executada (não foi usada no workflow).
-        # if len(timestamps2) == 0:
-        #     #print("Error in _get_timestamp_as_pandas: job_id {}".format(self.job_id))
-        #     #print(self.job_log)
-        #     raise Exception(self.ERROR_TASK_NOT_EXECUTED)
-        #
-        # self.jobs[job_id]["max_scheduled_timestamp"] = max(timestamps2)
-        # self.jobs[job_id]["min_scheduled_timestamp"] = min(timestamps2)
-        #
-        # duration = (self.jobs[job_id]["max_scheduled_timestamp"] -
-        #             self.jobs[job_id]["min_scheduled_timestamp"]).total_seconds()
+        duration = 0.0
+        for task in tasks:
+            if "job" not in task and "action" not in task:
+                duration += self._get_duration_task(task)
+        return duration
+
+    def _get_timestamp_as_spark(self, job_id, offset=0):
+
+        tasks = self.jobs[job_id]["tasks"]
 
         duration = 0.0
         for task in tasks:
             if "job" not in task and "action" not in task:
                 duration += self._get_duration_task(task)
+
+        if duration >= 0.0:
+            duration -= offset
+            if duration <= 0.0:
+                duration = 0.01
+
         return duration
 
     def get_timestamps(self, job_id, offset=0):
@@ -940,9 +901,10 @@ class HistoricalLemonadeJob(LemonadeJob):
     def _gen_dataflow_v5(self):
 
         task_orders = self.find_jobs_order()
-        operations_idx = 8
+        operations_idx = 9
         job_parent_idx = 2
-        time_idx = 3
+        time_idx = 4
+        task_idx = 3
 
         if "dc_w" not in self.workflow["name"]:
             return 
@@ -973,10 +935,12 @@ class HistoricalLemonadeJob(LemonadeJob):
             except e:
                 print(job_id)
                 print(task_orders)
+                
 
             dataflow[order_job] = [self.job_id,                             # job id
                                    order_job+1,                             # job_order
                                    "",                                      # job_parent
+                                   "",                                      # task_id
                                    self.jobs[job_id].get("total_seconds"),  # time in seconds
                                    self.platform,                           # platform_id
                                    n_cores,                                 # number of avaliable cores
@@ -997,6 +961,8 @@ class HistoricalLemonadeJob(LemonadeJob):
                 task = self.graph.nodes[task_id]
                 slug = task.get("operation", {"slug": None})["slug"]
 
+                dataflow[order_job][task_idx] = task_id
+
                 if slug:
                     db = None
                     try:
@@ -1004,8 +970,16 @@ class HistoricalLemonadeJob(LemonadeJob):
                     except e:
                         raise Exception(self.ERROR_SLUG_NOT_FOUND)
 
-                    if scenario in [slug, "data-migration"]:
+                    # computa apenas as tarefas de interesse. Tudo que estiver em
+                    # tasks_to_remove, será removido do tempo de execução do job
+                    if scenario in slug:
                         dataflow[order_job][operations_idx][slug] = operation
+                    elif (scenario == 'data-migration') and (slug == 'data-writer'):
+                        p = operation.parameters
+                        new_op = self.operation_api.all_operations[scenario](p)
+                        dataflow[order_job][operations_idx][scenario] = new_op
+                        tasks_to_remove.add(task_id)
+                        dataflow[order_job][time_idx] = self.real_time
                     else:
                         tasks_to_remove.add(task_id)
 
@@ -1018,6 +992,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                         # dataflow[order_job][size_idx][base_id] = db
                         new_dfs = operation.estimate_output([db.stats])
                         self.df_states[task_id] = new_dfs
+                        self.graph.nodes[task_id]["model"] = new_dfs
                     else:
                         dfs = []
                         for p in task["parents"]:
@@ -1025,7 +1000,10 @@ class HistoricalLemonadeJob(LemonadeJob):
 
                         # TODO: suporte ao split
                         new_dfs = operation.estimate_output(dfs)
+                        self.graph.nodes[task_id]["model"] = new_dfs
                         self.df_states[task_id] = new_dfs
+                        if (scenario == 'data-migration') and (slug == 'data-writer'):
+                            dataflow[order_job][operations_idx][scenario].estimate_output(dfs)
 
             # remove data-reader time
             for task in tasks_to_remove:

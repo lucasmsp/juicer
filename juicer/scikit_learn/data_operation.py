@@ -428,8 +428,10 @@ class SaveOperation(Operation):
         self.template = """
             path = '{{path}}'
             {%- if scheme == 'hdfs' and not protect %}
-            fs = hdfs.HadoopFileSystem('{{parsed.hostname}}', {{parsed.port}}, 
-               user='{{extra_params.get('user', parsed.username) or 'hadoop'}}')
+            
+            fs = hdfs.HadoopFileSystem(host='{{hdfs_server}}', 
+                                 port={{hdfs_port}},
+                                 user='{{hdfs_user}}')
             exists = fs.get_file_info(path).type.value == 2
             {%- elif scheme == 'file' or protect %}
             exists = os.path.exists(path)

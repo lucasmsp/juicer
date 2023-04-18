@@ -85,12 +85,13 @@ def _test_replace_values():
 
 def _test_clean_missing():
     print("# _test_clean_missing")
-    op1 = CleanMissingOperationModel({"operation_id": 1, "cleaning_mode": "REMOVE_ROW"})
+    op1 = CleanMissingOperationModel({"operation_id": 1, "cleaning_mode": "REMOVE_ROW", "attributes": {"value": ["age", "fare", "parch", "sibsp", "survived"]}})
     out = op1.estimate_output([df1])
     print(df1)
     print(out[0])
     print(out[0].columns)
     print(op1.gen_model())
+    return out[0]
 
 
 def _test_svm():
@@ -115,9 +116,10 @@ def _test_transformation():
         "tree": {"type": "BinaryExpression", "operator": "+", "left": {"type": "Identifier", "name": "age"}, "right": {"type": "Literal", "value": 1, "raw": "1"}}}]}})
     out = op1.estimate_output([df1])
     print(df1)
-    print(out[0])
-    print(out[0].columns)
-    print(op1.gen_model())
+    print("var: ", out[0])
+    print("columns: ", out[0].columns)
+    print("model: ", op1.gen_model())
+    return out[0]
 
     
 def _test_filter():

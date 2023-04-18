@@ -212,13 +212,13 @@ class MultiPlatformTranspiler(Transpiler):
             instances[task_id].parameters['multiplicity'] = dict()
             for p_id in instances[task_id].parameters['task']['parents']:
                 for flow in workflow['flows']:
-                    if flow['target_id'] == task_id and \
-                            flow['source_id'] == p_id:
-                        in_port = flow['target_port_name']
-                        source_port = flow['source_port']
-                        instances[task_id].parameters['multiplicity'][
-                            in_port] = sum([1 for f in workflow['flows']
-                                            if f['source_port'] == source_port])
+                    target_id = flow['target_id'] 
+                    port_name = flow['target_port_name']
+                    source_port = flow['source_port']
+                    if target_id == task_id and flow['source_id'] == p_id:
+                        instances[task_id].parameters['multiplicity'][port_name] = \
+                            sum([1 for f in workflow['flows']
+                                 if (f['source_port'] == source_port) and (f['source_id'] == p_id)])
 
         env_setup = {
             'autopep8': autopep8,

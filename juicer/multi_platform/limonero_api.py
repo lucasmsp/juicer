@@ -32,7 +32,7 @@ import findspark
 findspark.init()
 
 from juicer.spark.data_operation import DataReaderOperation
-from pyspark.sql.functions import col, countDistinct, count
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import QuantileDiscretizer
 
@@ -184,6 +184,14 @@ class BaseStatistics(object):
         for column in self.columns:
             self.columns[column].estimate_size()
         self.size_bytes_memory = sum([c.estimated_column_size_total for c in self.columns.values()])
+        self.n_rows = max([self.columns[c].n_rows for c in self.columns])
+    
+    def remove_n_rows(self, rows_to_remove):
+        if rows_to_remove < self.n_rows:
+            for column in self.columns:
+                self.columns[column].remove_n_rows(rows_to_remove)
+            self.recalculate()
+        
 
 
 class LemonadeColumn(object):
@@ -219,6 +227,10 @@ class LemonadeColumn(object):
         self.estimated_column_size_total = 0
         self.__dict__.update(column)
         self.estimate_size()
+        
+        if not self.distinct_values:
+            self.distinct_values = self.n_rows
+    
         if self.deciles:
             self.deciles = json.loads(self.deciles)
             new_deciles = {}
@@ -226,9 +238,12 @@ class LemonadeColumn(object):
             if self.type in ["DOUBLE", "DECIMAL"]:
                 for k,v in self.deciles.items():
                     new_deciles[float(k)] = v
-            else:
+            elif self.type in ["INTEGER", "LONG"]:
                 for k,v in self.deciles.items():
                     new_deciles[int(k.split(".")[0])] = v
+            else:
+                for k,v in self.deciles.items():
+                    new_deciles[k] = v
 
             self.deciles = new_deciles
                 
@@ -258,6 +273,9 @@ class LemonadeColumn(object):
     
     def is_number(self):
         return self.type in ["BINARY", "DOUBLE", "DECIMAL", "FLOAT", "LONG", "INTEGER"]
+    
+    def is_string(self):
+        return self.type in ["TEXT", "CHARACTER"]
     
     def remove_n_rows(self, rows_to_remove):
         r1 = rows_to_remove // 2
@@ -297,8 +315,10 @@ class LemonadeColumn(object):
             return None
         
     def get_elements_interval(self, overlap_interval):
-        if self.deciles:
-
+        if not overlap_interval:
+            return 0
+        
+        elif self.deciles:
             tmp = {}
             # filtrando elementos menores que o máximo
             for k in sorted(list(self.deciles.keys()), reverse=True):
@@ -429,7 +449,7 @@ class LimoneroCalibration(object):
                 df = _locals["df"]
                 estimated_rows = df.count()
                 stats[datasource_id] = {"estimated_rows": estimated_rows, "attribute": {}}
-                distinct_values = df.agg(*(countDistinct(col(c)).alias(c) for c in df.columns)) \
+                distinct_values = df.agg(*(F.countDistinct(F.col(c)).alias(c) for c in df.columns)) \
                     .toPandas() \
                     .to_dict(orient="records")[0]
 
@@ -440,21 +460,30 @@ class LimoneroCalibration(object):
                 for c in df.columns:
                     col_type = dtypes[c]
                     
-                    if c in summary:
-                        min_value = summary[c]['min']
-                        max_value = summary[c]['max']
-                    else:
-                        min_value = "NULL"
-                        max_value = "NULL"
-                        
+                    missing_total = 0
                     mean = "NULL"
                     std_deviation = "NULL"
                     deciles = "NULL"
                     median = 'NULL'
-                    missing_total = 0
+                    min_value = "NULL"
+                    max_value = "NULL"
+                    
+                    
+                    if c in summary:
+                        # numeric and string columns
+                        min_value = summary[c]['min']
+                        max_value = summary[c]['max']
+                        missing_total = estimated_rows - int(summary[c]['count'])
+                    else:
+                        # other dtypes, such as datetime
+                        result = df.agg(F.min(c).alias("min"), F.max(c).alias("max"), F.count(c).alias("count")).limit(1).collect()[0]
+                        min_value = result.__getitem__('min')
+                        max_value = result.__getitem__('max')
+                        missing_total = estimated_rows - result.__getitem__('count')
 
-                    # TODO !!!
-                    if (dtypes[c] not in ["string"]) and (c in summary):
+
+                    if (col_type not in ["string"]) and (c in summary):
+                        # only numeric fields
                         median = summary[c]['50%']
 
                         if summary[c]['mean'] not in [None, "NaN", "Infinity"]:
@@ -474,7 +503,7 @@ class LimoneroCalibration(object):
                         bucket_range = bucketizer.getSplits()
 
                         counts = bucketizer.transform(df).groupby("buckets")\
-                            .agg(count(col(c)).alias("count"))\
+                            .agg(F.count(F.col(c)).alias("count"))\
                             .orderBy("buckets").collect()
 
                         bucket_range[-1] = max_value
@@ -486,7 +515,20 @@ class LimoneroCalibration(object):
                         deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
     
                         missing_total = estimated_rows - int(summary[c]['count'])
-    
+                    
+                    elif col_type in ["string"]:
+                        top10 = df.select(c).groupby(c).count()\
+                            .orderBy(F.col(c).desc())\
+                            .limit(10)\
+                            .collect()
+                        
+                        deciles = {top10[i].__getitem__(c): top10[i].__getitem__('count')
+                                for i in range(len(top10))}
+                        deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
+                    elif col_type in ["datetime"]:
+                        #!TODO
+                        pass
+
                     stats[datasource_id]['attribute'][c] = {'distinct_values': distinct_values[c],
                                                             'missing_total': missing_total,
                                                             'mean': mean,

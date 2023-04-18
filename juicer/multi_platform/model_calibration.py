@@ -109,7 +109,7 @@ class CostModel(object):
                                                       "Task running (cached data)"]))
                 ]) == 0:
 
-                    current_job_log = current_job_log[["task_id", "l_status", "operation_id", "l_date"]]\
+                    current_job_log = current_job_log[["task_id", "l_status", "operation_id", "l_date", 'message']]\
                             .to_dict('records')
                     return current_job_log
 
@@ -157,6 +157,67 @@ class CostModel(object):
                 self.lemonade_jobs[current_job_id] = hlj
             current_job_id += 1
 
+#     def gen_dag(self, lj):
+
+#         jobs_to_gen = {"single-input": lj}
+
+#         for lj in jobs_to_gen.values():
+#             try:
+#                 _ = lj.get_dataflow("v5")
+#                 graph = lj.graph
+#             except Exception as e:
+#                 msg = str(e)
+#                 if "[WARN] Skipping lemonade job because it contains an operation" in msg:
+#                     self.lemonade_jobs_excluded_by_operation.append(lj.job_id)
+#                 elif "[WARN] Skipping lemonade job because one of it's input data size is unknown" in msg:
+#                     self.lemonade_jobs_excluded_by_database.append(lj.job_id)
+#                 else:
+#                     print("gen_dag: " + str(e) + " - Lemonade_id: {}".format(lj.job_id))
+#                     print(traceback.format_exc())
+
+#         return graph
+    
+    
+    def gen_output_returns(self, lj=None):
+
+        if lj:
+            jobs_to_gen = {"single-input": lj}
+        else:
+            jobs_to_gen = self.lemonade_jobs
+    
+        tmp = []
+        for lj in jobs_to_gen.values():
+            try:
+                jobs = lj.get_dataflow("v5")
+                if jobs:
+                    for d in jobs:
+                        tmp.append(d)
+            except Exception as e:
+                msg = str(e)
+                if "[WARN] Skipping lemonade job because it contains an operation" in msg:
+                    self.lemonade_jobs_excluded_by_operation.append(lj.job_id)
+                elif "[WARN] Skipping lemonade job because one of it's input data size is unknown" in msg:
+                    self.lemonade_jobs_excluded_by_database.append(lj.job_id)
+                else:
+                    print("gen_dataflow_model_v5: " + str(e) + " - Lemonade_id: {}".format(lj.job_id))
+                    print(traceback.format_exc())
+
+        rows = []
+        operations_idx = 9
+
+        for idx, r in enumerate(tmp):
+            for slug, op in r[operations_idx].items():
+                try:
+                    rows.append([slug, op.output])
+                except Exception as e:
+                    print(op.input)
+                    print(op.output)
+                    print(tmp[idx])
+                    print(str(e))
+                    traceback.print_exc()
+
+        return rows
+    
     def gen_dataflow_model_v5(self, lj=None):
 
         if lj:
@@ -183,20 +244,29 @@ class CostModel(object):
 
         dataflow = []
         rows = []
-        operations_idx = 8
+        operations_idx = 9
 
-        for r in tmp:
+        for idx, r in enumerate(tmp):
             t = [r[i] for i in range(operations_idx)]
             dataflow.append(t)
             row = {}
             for slug, op in r[operations_idx].items():
-                f = op.gen_model()
+                try:
+                    f = op.gen_model()
+                except Exception as e:
+                    print(op.input)
+                    print(op.output)
+                    print(tmp[idx])
+                    print(str(e))
+                    traceback.print_exc()
+                    
                 for param, v in f.items():
                     row["{}-{}".format(slug, param)] = v
             rows.append(row)
 
         rows = pd.DataFrame.from_dict(rows)
-        dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "job_order", "job_parents",
+    
+        dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "job_order", "job_parents", "task_id",
                                                     "total_seconds", "platform_id",
                                                     "n_cores", "memory_ram", "scenario"])
         dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
@@ -205,6 +275,56 @@ class CostModel(object):
 
         return dataflow
 
+    def gen_prediction_model(self, lj=None):
+
+        jobs_to_gen = {"single-input": lj}
+
+    
+        tmp = []
+        for lj in jobs_to_gen.values():
+            try:
+                jobs = lj.get_dataflow("v5")
+                graph = lj.graph
+                if jobs:
+                    for d in jobs:
+                        tmp.append(d)
+            except Exception as e:
+                msg = str(e)
+                if "[WARN] Skipping lemonade job because it contains an operation" in msg:
+                    self.lemonade_jobs_excluded_by_operation.append(lj.job_id)
+                elif "[WARN] Skipping lemonade job because one of it's input data size is unknown" in msg:
+                    self.lemonade_jobs_excluded_by_database.append(lj.job_id)
+                else:
+                    print("gen_dataflow_model_v5: " + str(e) + " - Lemonade_id: {}".format(lj.job_id))
+                    print(traceback.format_exc())
+
+
+        rows = []
+        operations_idx = 9
+        task_id_idx = 3
+
+        for idx, r in enumerate(tmp):
+            task_id = r[task_id_idx]
+            row = {"task_id": task_id}
+            for slug, op in r[operations_idx].items():
+                try:
+                    row["slug"] = slug
+                    row["output"] = op.output
+                    f = op.gen_model()
+                except Exception as e:
+                    print(op.input)
+                    print(op.output)
+                    print(tmp[idx])
+                    print(str(e))
+                    traceback.print_exc()
+                    
+                for param, v in f.items():
+                    row["{}-{}".format(slug, param)] = v
+            rows.append(row)
+
+        
+        return rows, graph
+    
     def load_models(self):
         """
         Carrega os modelos de regressão para cada caixa/plataforma suportada pelo Lemonade.

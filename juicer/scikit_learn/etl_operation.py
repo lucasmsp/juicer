@@ -245,22 +245,20 @@ class CleanMissingOperation(Operation):
                 code = """
                     min_missing_ratio = {min_thresh}
                     max_missing_ratio = {max_thresh}
-                    {output} = {input}{copy_code}
                     ratio = {input}[{columns}].isnull().sum(axis=1) / len({columns})
                     ratio_mask = (ratio > min_missing_ratio) & (ratio <= max_missing_ratio)
-                    {output} = {output}[~ratio_mask]
+                    {output} = {input}[~ratio_mask]{copy_code}
                     """ \
                     .format(min_thresh=self.min_ratio, max_thresh=self.max_ratio,
                             copy_code=copy_code, output=self.output,
                             input=self.named_inputs['input data'],
-                            columns=self.attributes_CM, op=op)
+                            columns=self.attributes_CM)
 
             elif self.mode_CM == "REMOVE_COLUMN":
 
                 code = """
                     min_missing_ratio = {min_thresh}
                     max_missing_ratio = {max_thresh}
-                    {output} = {input}{copy_code}
                     to_remove = []
                     for col in {columns}:
                         ratio = {input}[col].isnull().sum() / len({input})
@@ -268,7 +266,7 @@ class CleanMissingOperation(Operation):
                         if ratio_mask:
                             to_remove.append(col)
                     
-                    {output}.drop(columns=to_remove, inplace=True)
+                    {output} = {input}.drop(columns=to_remove, inplace=False)
                     """ \
                     .format(min_thresh=self.min_ratio, max_thresh=self.max_ratio,
                             output=self.output, copy_code=copy_code,
@@ -284,7 +282,6 @@ class CleanMissingOperation(Operation):
                     else:
                         op = "{output}[col].fillna(value={value}, inplace=True)" \
                             .format(output=self.output, value=self.value_CM)
-
                 elif self.mode_CM == "MEAN":
                     op = "{output}[col].fillna(value={output}" \
                          "[col].mean(), inplace=True)".format(output=self.output)
@@ -292,7 +289,6 @@ class CleanMissingOperation(Operation):
                     op = "{output}[col].fillna(value={output}" \
                          "[col].median(), inplace=True)".format(
                         output=self.output)
-
                 elif self.mode_CM == "MODE":
                     op = "{out}[col].fillna(value={out}[col].mode()[0], inplace=True)" \
                         .format(out=self.output)
@@ -652,8 +648,15 @@ class FilterOperation(Operation):
             if len(expressions) > 0:
                 for e in expressions:
                     code += """
-            {out} = {out}[{out}.apply({expr}, axis=1)]""".format(out=self.output,
-                                                                 expr=e)
+            {out} = {out}[{out}.apply({expr}, axis=1)]"""\
+                    .replace(
+                        "{out} = {out}[{out}.apply(", 
+                        "{out} = {out}.loc[{out}")\
+                    .replace(
+                        ", axis=1)", 
+                        "")\
+                    .format(out=self.output, expr=e)\
+                    .replace("lambda row: row", "")
 
             indentation = " and "
             if len(filters) > 0:
@@ -955,7 +958,7 @@ class SelectOperation(Operation):
 
     def generate_code(self):
         if self.has_code:
-            code = "{output} = {input}[[{column}]]" \
+            code = "{output} = {input}[[{column}]].copy(deep=False)" \
                 .format(output=self.output, column=self.cols,
                         input=self.named_inputs['input data'])
             return dedent(code)
@@ -1085,12 +1088,21 @@ class TransformationOperation(Operation):
             if self.parameters['multiplicity']['input data'] > 1 else ""
 
         code = """
-        {out} = {input}{copy_code}
+        # FIX: In some cases, when a DataFrame is projected or filtered,
+        # the Pandas BlockManager (internals Pandas structure) is not 
+        # updated, slowing down significantly the performance of an 
+        # apply operation.
+        {out} = pd.DataFrame()
+        for col in {input}.columns:
+            {out}[col] = {input}[col].to_numpy()
+        {out} = {out}.infer_objects()
+        {out} = {out}{copy_code}
         functions = [{expr}]
         for col, function in functions:
             {out}[col] = {out}.apply(function, axis=1)
         """.format(copy_code=copy_code,
-                   out=self.output, input=self.named_inputs['input data'],
+                   out=self.output, 
+                   input=self.named_inputs['input data'],
                    expr=functions)
         return dedent(code)
 
