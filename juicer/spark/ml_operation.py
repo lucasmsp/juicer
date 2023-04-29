@@ -1368,7 +1368,7 @@ class ClassificationModelOperation(DeployModelMixin, Operation):
 
                 final_features = 'features_tmp'
                 stages.append(feature.VectorAssembler(
-                    inputCols=to_assemble, outputCol=final_features))
+                    inputCols=to_assemble, outputCol=final_features, handleInvalid = "skip"))
                 requires_pipeline = True
                 individual_feat = features_names
             else:

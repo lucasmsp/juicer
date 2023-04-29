@@ -252,7 +252,8 @@ class CostModel(object):
             row = {}
             for slug, op in r[operations_idx].items():
                 try:
-                    f = op.gen_model()
+                    f1 = op.gen_model(platform_target=1)
+                    f4 = op.gen_model(platform_target=4)
                 except Exception as e:
                     print(op.input)
                     print(op.output)
@@ -260,8 +261,10 @@ class CostModel(object):
                     print(str(e))
                     traceback.print_exc()
                     
-                for param, v in f.items():
-                    row["{}-{}".format(slug, param)] = v
+                for param, v in f1.items():
+                    row["{}-spark-{}".format(slug, param)] = v
+                for param, v in f4.items():
+                    row["{}-pandas-{}".format(slug, param)] = v
             rows.append(row)
 
         rows = pd.DataFrame.from_dict(rows)
@@ -310,7 +313,8 @@ class CostModel(object):
                 try:
                     row["slug"] = slug
                     row["output"] = op.output
-                    f = op.gen_model()
+                    f1 = op.gen_model(platform_target=1)
+                    f4 = op.gen_model(platform_target=4)
                 except Exception as e:
                     print(op.input)
                     print(op.output)
@@ -318,8 +322,10 @@ class CostModel(object):
                     print(str(e))
                     traceback.print_exc()
                     
-                for param, v in f.items():
-                    row["{}-{}".format(slug, param)] = v
+                for param, v in f1.items():
+                    row["{}-spark-{}".format(slug, param)] = v
+                for param, v in f4.items():
+                    row["{}-pandas-{}".format(slug, param)] = v
             rows.append(row)
 
         

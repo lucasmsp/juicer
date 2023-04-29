@@ -284,7 +284,7 @@ class AddColumnsOperationModel(GenericOperationModel):
         self.output.recalculate()
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         return {
             # "input_size_bytes_memory": 
             #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
@@ -345,7 +345,7 @@ class AddRowsOperationModel(GenericOperationModel):
         self.output.recalculate()
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             "n_rows": self.input[0].n_rows + self.input[1].n_rows,
@@ -443,7 +443,7 @@ class AggregationOperationModel(OperationModel):
 
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         return {
             "n_rows": self.input.n_rows,
             # "input_size_bytes_memory": self.input.size_bytes_memory,
@@ -571,7 +571,7 @@ class CleanMissingOperationModel(OperationModel):
 
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             #"input_size_bytes_memory": self.input.size_bytes_memory,
@@ -610,7 +610,7 @@ class DataReaderOperationModel(OperationModel):
         self.output = copy.deepcopy(base_statistics[0])
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         return {
             "n_rows": self.output.n_rows,
             "size_bytes_disk": self.output.size_bytes_disk * (1024*1024),
@@ -647,7 +647,7 @@ class DataWriterOperationModel(OperationModel):
         self.output = copy.deepcopy(base_statistics[0])
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         return {
             "input_size_bytes_memory": self.output.size_bytes_memory,
             #"n_rows": self.output.n_rows,
@@ -683,7 +683,7 @@ class DataMigrationOperationModel(OperationModel):
         self.output = copy.deepcopy(base_statistics[0])
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         return {
             "input_size_bytes_memory": self.output.size_bytes_memory,
             #'target_platform': self.platform_target,
@@ -940,7 +940,7 @@ class FilterSelectionOperationModel(OperationModel):
         
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             #"input_size_bytes_memory": self.input.size_bytes_memory,
@@ -1253,7 +1253,7 @@ class JoinOperationModel(OperationModel):
           
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         ds = sorted([2 if self.input1.size_bytes_memory >= (128*(1024*1024)) else 1, 
                      2 if self.input2.size_bytes_memory >= (128*(1024*1024)) else 1], reverse=True)
         return {
@@ -1517,7 +1517,7 @@ class ProjectionOperationModel(OperationModel):
         self.output.recalculate()
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             "n_rows": self.input.n_rows,
@@ -1669,7 +1669,7 @@ class ReplaceValueOperationModel(OperationModel):
         # TODO: update histogram !!
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             "n_rows": self.output.n_rows,
@@ -1748,7 +1748,7 @@ class SortOperationModel(OperationModel):
         self.output = copy.deepcopy(base_statistics[0])
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
         parameters = self.convert()
         keys = parameters["attributes"]
 
@@ -1910,18 +1910,28 @@ class SVMClassificationOperationModel(OperationModel):
 #             "platform_id": self.platform_target
 #         }
     
-    def gen_model(self):
-
+    def gen_model(self, platform_target=None):
         col1 = (self.input.n_rows**2) * len(self.features_col)**(1/5)
         col2 = ((self.features["max_iter"]/100)**3) #.7182
-        return {
-            #v1
-            "n_rows": self.input.n_rows,
-            "max_iter":  self.features["max_iter"],
-            "mix": (np.log(self.input.n_rows)  * col2)/100_000,
-            "n_features": len(self.features_col)**(1/5),
-            "platform_id": self.platform_target
-        }
+        
+        if platform_target == 4:
+            return {
+                #v1
+                "n_rows": self.input.n_rows,
+                "max_iter":  self.features["max_iter"],
+                "mix": (np.log(self.input.n_rows)  * col2)/100_000,
+                "n_features": len(self.features_col)**(1/5),
+                "platform_id": self.platform_target
+            }
+        else:
+            return {
+                #v1
+                 "n_rows": self.input.n_rows,
+                "max_iter":  self.features["max_iter"],
+                #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
+                "n_features": len(self.features_col),#**(1/5),
+                "platform_id": self.platform_target
+            }
 
 
 class TransformationOperationModel(OperationModel):
@@ -1988,7 +1998,7 @@ class TransformationOperationModel(OperationModel):
 
         return [self.output]
 
-    def gen_model(self):
+    def gen_model(self, platform_target=None):
 
         return {
             #"output_bytes_per_row": self.output.size_bytes_memory / self.output.n_rows, 

@@ -989,7 +989,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                         db_size = db.disk_size
                         if db_size < 0:
                             raise Exception(self.ERROR_UNKNOWN_SIZE.format(db.name, db.base_id))
-                        # dataflow[order_job][size_idx][base_id] = db
+
                         new_dfs = operation.estimate_output([db.stats])
                         self.df_states[task_id] = new_dfs
                         self.graph.nodes[task_id]["model"] = new_dfs
@@ -1002,6 +1002,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                         new_dfs = operation.estimate_output(dfs)
                         self.graph.nodes[task_id]["model"] = new_dfs
                         self.df_states[task_id] = new_dfs
+                        
                         if (scenario == 'data-migration') and (slug == 'data-writer'):
                             dataflow[order_job][operations_idx][scenario].estimate_output(dfs)
 
