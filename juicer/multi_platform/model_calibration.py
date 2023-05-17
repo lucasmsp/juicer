@@ -203,7 +203,7 @@ class CostModel(object):
                     print(traceback.format_exc())
 
         rows = []
-        operations_idx = 9
+        operations_idx = 10
 
         for idx, r in enumerate(tmp):
             for slug, op in r[operations_idx].items():
@@ -244,7 +244,7 @@ class CostModel(object):
 
         dataflow = []
         rows = []
-        operations_idx = 9
+        operations_idx = 10
 
         for idx, r in enumerate(tmp):
             t = [r[i] for i in range(operations_idx)]
@@ -270,7 +270,7 @@ class CostModel(object):
         rows = pd.DataFrame.from_dict(rows)
     
         dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "job_order", "job_parents", "task_id",
-                                                    "total_seconds", "platform_id",
+                                                    "total_seconds", "platform_id", "cluster_id",
                                                     "n_cores", "memory_ram", "scenario"])
         dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
         dataflow = dataflow.fillna(0)
@@ -303,7 +303,7 @@ class CostModel(object):
 
 
         rows = []
-        operations_idx = 9
+        operations_idx = 10
         task_id_idx = 3
 
         for idx, r in enumerate(tmp):
@@ -313,6 +313,7 @@ class CostModel(object):
                 try:
                     row["slug"] = slug
                     row["output"] = op.output
+                    row['input-size'] = op.total_input_size_bytes_memory
                     f1 = op.gen_model(platform_target=1)
                     f4 = op.gen_model(platform_target=4)
                 except Exception as e:

@@ -664,20 +664,23 @@ class LemonadeJob(object):
 
         task_orders = self.find_jobs_order()
 
-        scenario_idx = 8        
-        operations_idx = 9
         job_parent_idx = 2
-        time_idx = 4
         task_idx = 3
+        time_idx = 4
+        scenario_idx = 9        
+        operations_idx = 10
+        
 
         dataflow = [0 for _ in range(len(self.jobs))]
         if self.cluster:
             n_executors = self.cluster.executors
             n_cores = n_executors * self.cluster.executor_cores
             ram = n_executors * self.cluster.executor_memory
+            cluster_id = self.cluster.cluster_id
         else:
             n_cores = -1
             ram = -1
+            cluster_id = -1
 
         for order_job, job_id in enumerate(task_orders):
             try:
@@ -693,6 +696,7 @@ class LemonadeJob(object):
                                    "",                                      # task_id
                                    -1,                                      # time in seconds
                                    self.platform,                           # platform_id
+                                   cluster_id,                              # cluster_id
                                    n_cores,                                 # number of avaliable cores
                                    ram,                                     # available RAM
                                    "",                                      # scenario
@@ -901,10 +905,11 @@ class HistoricalLemonadeJob(LemonadeJob):
     def _gen_dataflow_v5(self):
 
         task_orders = self.find_jobs_order()
-        operations_idx = 9
+        
         job_parent_idx = 2
-        time_idx = 4
         task_idx = 3
+        time_idx = 4
+        operations_idx = 10
 
         if "dc_w" not in self.workflow["name"]:
             return 
@@ -924,9 +929,11 @@ class HistoricalLemonadeJob(LemonadeJob):
             n_executors = self.cluster.executors
             n_cores = n_executors * self.cluster.executor_cores
             ram = n_executors * self.cluster.executor_memory
+            cluster_id = self.cluster.cluster_id
         else:
             n_cores = -1
             ram = -1
+            cluster_id = -1
 
         for order_job, job_id in enumerate(task_orders):
             try:
@@ -943,6 +950,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                                    "",                                      # task_id
                                    self.jobs[job_id].get("total_seconds"),  # time in seconds
                                    self.platform,                           # platform_id
+                                   cluster_id,                              # cluster_id
                                    n_cores,                                 # number of avaliable cores
                                    ram,                                     # available RAM
                                    scenario,                                # scenario

@@ -232,6 +232,8 @@ class LemonadeColumn(object):
             self.distinct_values = self.n_rows
     
         if self.deciles:
+            #print(self.deciles)
+            self.deciles = self.deciles.replace('"', "'").replace("{'", '{"').replace("': ", '": ').replace(", '", ', "').replace("\'", '\\"')
             self.deciles = json.loads(self.deciles)
             new_deciles = {}
 

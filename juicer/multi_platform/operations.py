@@ -258,6 +258,8 @@ class AddColumnsOperationModel(GenericOperationModel):
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics)
+        self.total_input_size_bytes_memory = self.input[0].size_bytes_memory + self.input[1].size_bytes_memory
+        
         n1 = self.input[0].n_rows
         n2 = self.input[1].n_rows
         n_rows = max([n1, n2])
@@ -314,6 +316,7 @@ class AddRowsOperationModel(GenericOperationModel):
     def estimate_output(self, base_statistics):
         # Assume que as os dois datasets possuem mesmas colunas
         self.input = copy.deepcopy(base_statistics)
+        self.total_input_size_bytes_memory = self.input[0].size_bytes_memory + self.input[1].size_bytes_memory
         n_rows = sum([r.n_rows for r in base_statistics])
         self.output = copy.deepcopy(base_statistics[0])
         self.output.n_rows = n_rows
@@ -406,6 +409,7 @@ class AggregationOperationModel(OperationModel):
         parameters = self.convert()
         keys = parameters["attributes"]
         self.input = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         distinct_values = 1
         for k in keys:
             distinct_values += self.input.columns[k].distinct_values
@@ -535,6 +539,7 @@ class CleanMissingOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         self.output = copy.deepcopy(base_statistics[0])
         parameters = self.convert()
 
@@ -608,6 +613,7 @@ class DataReaderOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = 0
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -645,6 +651,7 @@ class DataWriterOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.output.size_bytes_memory
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -681,6 +688,7 @@ class DataMigrationOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -844,7 +852,7 @@ class FilterSelectionOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(self.input)
-
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         parameters = self.convert()
         #TODO: apenas uma expressão é suportada
         self.n_expressions = len(parameters["expression"])
@@ -875,7 +883,8 @@ class FilterSelectionOperationModel(OperationModel):
                     operator = operator.replace("<", ">")
 
             to_remove = 0
-            if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_string():
+            
+            if (self.output.columns[col_name].deciles) and (self.output.columns[col_name].is_number() or self.output.columns[col_name].is_string()):
                 value = ops["Literal"]
                 deciles = self.output.columns[col_name].deciles
                 if self.output.columns[col_name].is_number():
@@ -891,6 +900,7 @@ class FilterSelectionOperationModel(OperationModel):
                                 to_remove += deciles[key]
                                 del deciles[key]
                     else:
+   
                         for k in deciles:
                             if k != value:
                                 to_remove += deciles[k]
@@ -1141,7 +1151,7 @@ class JoinOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input1 = copy.deepcopy(base_statistics[0])
         self.input2 = copy.deepcopy(base_statistics[1])
-
+        self.total_input_size_bytes_memory = self.input1.size_bytes_memory + self.input2.size_bytes_memory
         parameters = self.convert()
         # Por enquanto só considero KEEP_RIGHT_KEYS_PARAM como false
         cols_output = []
@@ -1257,7 +1267,7 @@ class JoinOperationModel(OperationModel):
         ds = sorted([2 if self.input1.size_bytes_memory >= (128*(1024*1024)) else 1, 
                      2 if self.input2.size_bytes_memory >= (128*(1024*1024)) else 1], reverse=True)
         return {
-            "input_n_rows": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
+            "input_n_rows": self.total_input_size_bytes_memory,
             "output": self.output.size_bytes_memory,
             #"input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
@@ -1508,6 +1518,7 @@ class ProjectionOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         self.output = BaseStatistics(n_rows=self.input.n_rows)
 
         parameters = self.convert()
@@ -1658,6 +1669,7 @@ class ReplaceValueOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.output.size_bytes_memory
         parameters = self.convert()
 
         if "attributes" in parameters:
@@ -1746,6 +1758,7 @@ class SortOperationModel(OperationModel):
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.output.size_bytes_memory
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -1882,6 +1895,7 @@ class SVMClassificationOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
 
         parameters = self.convert()
         self.features_col = parameters["features"]
@@ -1968,6 +1982,7 @@ class TransformationOperationModel(OperationModel):
         # da coluna de origem
 
         self.input = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
         self.output = copy.deepcopy(base_statistics[0])
         parameters = self.convert()
 
