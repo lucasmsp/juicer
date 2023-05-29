@@ -24,10 +24,11 @@ import traceback
 import pickle
 
 from juicer.multi_platform.auxiliar_services import *
-from juicer.multi_platform.jobs_api import LemonadeJob, HistoricalLemonadeJob
-from juicer.multi_platform.auxiliar_services import get_sql_connection
 from juicer.multi_platform.operations import OperationModeling
 from juicer.service.tahiti_service import query_tahiti
+
+from juicer.multi_platform.lemonade_job import LemonadeJob
+from juicer.multi_platform.lemonade_job_calibration import HistoricalLemonadeJob
 
 DEBUG = True
 

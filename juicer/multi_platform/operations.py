@@ -1933,8 +1933,8 @@ class SVMClassificationOperationModel(OperationModel):
                 #v1
                 "n_rows": self.input.n_rows,
                 "max_iter":  self.features["max_iter"],
-                "mix": (np.log(self.input.n_rows)  * col2)/100_000,
-                "n_features": len(self.features_col)**(1/5),
+                #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
+                "n_features": len(self.features_col), #**(1/5),
                 "platform_id": self.platform_target
             }
         else:
