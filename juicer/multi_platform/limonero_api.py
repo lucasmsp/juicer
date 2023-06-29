@@ -187,10 +187,25 @@ class BaseStatistics(object):
         self.n_rows = max([self.columns[c].n_rows for c in self.columns])
     
     def remove_n_rows(self, rows_to_remove):
-        if rows_to_remove < self.n_rows:
+
+        if rows_to_remove <= self.n_rows:
             for column in self.columns:
                 self.columns[column].remove_n_rows(rows_to_remove)
             self.recalculate()
+            
+    def remove_all_rows(self):
+        self.n_rows = 0
+        
+        for column in self.columns:
+            self.columns[column].n_rows = 0
+            self.columns[column].missing_total = 0
+            self.columns[column].min_value = None
+            self.columns[column].max_value = None
+            self.columns[column].distinct_values = 0
+            self.columns[column].deciles = None
+            
+        self.recalculate()
+        
         
 
 
@@ -266,7 +281,7 @@ class LemonadeColumn(object):
             if self.type in ["TEXT", "CHARACTER"]:
                 self.estimated_column_size += (4+8)
 
-        self.estimated_column_size_total = self.estimated_column_size * self.n_rows - \
+        self.estimated_column_size_total = (self.estimated_column_size * self.n_rows) - \
             (self.LIMONERO_DATA_TYPES_TO_BYTES[self.type] * self.missing_total)
 
     def __repr__(self):
@@ -279,18 +294,24 @@ class LemonadeColumn(object):
     def is_string(self):
         return self.type in ["TEXT", "CHARACTER"]
     
+    def is_date(self):
+        return self.type == "DATE"
+    
     def remove_n_rows(self, rows_to_remove):
-        r1 = rows_to_remove // 2
+        """
+        Consideramos uma distribuição uniforme
+        """
+        ratio = self.missing_total // max([self.n_rows, 0.0001])
+        n = int(rows_to_remove * ratio)
         
-        if self.missing_total < r1:
-            r1 = self.missing_total
+        if self.missing_total < n:
+            n = self.missing_total
             self.missing_total = 0
         else:
-            self.missing_total -= r1
-            
-        r2 = rows_to_remove - r1
+            self.missing_total -= n
         
-        self.n_rows -= r2
+        self.n_rows -= rows_to_remove
+        
 
     def get_bin_to_value(self, v1, mode="equals"):
         if self.deciles:
@@ -416,7 +437,7 @@ class LimoneroCalibration(object):
         spark_builder = SparkSession.builder.appName('Helper')
         for option, value in app_configs.items():
             spark_builder = spark_builder.config(option, value)
-        spark_session = spark_builder.getOrCreate()
+        spark_session = spark_builder.master("local[*]").getOrCreate()
 
         datasources = [i for i in range(self.current_datasource_id, self.last_datasource_id)]
         stats = {}
@@ -459,7 +480,8 @@ class LimoneroCalibration(object):
                 summary = df.summary().toPandas().set_index("summary").T.to_dict(orient='index')
                 dtypes = {k: v for k, v in df.dtypes}
 
-                for c in df.columns:
+                #for c in df.columns:
+                for c in ["shipdate", 'commitdate', 'receiptdate']:
                     col_type = dtypes[c]
                     
                     missing_total = 0
@@ -478,7 +500,11 @@ class LimoneroCalibration(object):
                         missing_total = estimated_rows - int(summary[c]['count'])
                     else:
                         # other dtypes, such as datetime
-                        result = df.agg(F.min(c).alias("min"), F.max(c).alias("max"), F.count(c).alias("count")).limit(1).collect()[0]
+                        result = df.agg(F.min(c).alias("min"), 
+                                        F.max(c).alias("max"), 
+                                        F.count(c).alias("count"))\
+                            .limit(1)\
+                            .collect()[0]
                         min_value = result.__getitem__('min')
                         max_value = result.__getitem__('max')
                         missing_total = estimated_rows - result.__getitem__('count')
@@ -498,38 +524,21 @@ class LimoneroCalibration(object):
                             if std_deviation >= 2e30:
                                 std_deviation = "NULL"
 
-                        # the following part will be executed only to numerical data
-                        qds1 = QuantileDiscretizer(inputCol=c, outputCol="buckets")  # [lower, upper)
-                        qds1.setNumBuckets(10)
-                        bucketizer = qds1.fit(df)
-                        bucket_range = bucketizer.getSplits()
-
-                        counts = bucketizer.transform(df).groupby("buckets")\
-                            .agg(F.count(F.col(c)).alias("count"))\
-                            .orderBy("buckets").collect()
-
-                        bucket_range[-1] = max_value
-
-                        freq = {int(counts[i].__getitem__('buckets')): counts[i].__getitem__('count')
-                                for i in range(len(counts)) if counts[i].__getitem__('buckets')}
-
-                        deciles = {bucket_range[i + 1]: freq.get(i) for i in freq}
-                        deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
-    
-                        missing_total = estimated_rows - int(summary[c]['count'])
+                        
+                        deciles = gen_deciles_numeric(c, df, min_value, max_value)
                     
                     elif col_type in ["string"]:
-                        top10 = df.select(c).groupby(c).count()\
-                            .orderBy(F.col(c).desc())\
-                            .limit(10)\
-                            .collect()
+                        deciles = gen_deciles_string(c, df, min_value, max_value)
                         
-                        deciles = {top10[i].__getitem__(c): top10[i].__getitem__('count')
-                                for i in range(len(top10))}
-                        deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
+                    elif col_type in ['date']:
+                        column_tmp = c + "_tmp"
+                        df = df.withColumn(column_tmp, F.unix_timestamp(c))
+                        min_value = min_value.strftime('%s')
+                        max_value = max_value.strftime('%s')
+                        deciles = gen_deciles_numeric(column_tmp, df, min_value, max_value)
+                        
                     elif col_type in ["datetime"]:
-                        #!TODO
-                        pass
+                        raise Exception("DateTime not supported yet")
 
                     stats[datasource_id]['attribute'][c] = {'distinct_values': distinct_values[c],
                                                             'missing_total': missing_total,
@@ -576,6 +585,40 @@ class LimoneroCalibration(object):
         print("Limonero's calibration is finished ...")
 
 
+        
+def gen_deciles_numeric(column, df, min_value, max_value):
+    # the following part will be executed only to numerical data
+    qds1 = QuantileDiscretizer(inputCol=column, outputCol="buckets")  # [lower, upper)
+    qds1.setNumBuckets(10)
+    bucketizer = qds1.fit(df)
+    bucket_range = bucketizer.getSplits()
+
+    counts = bucketizer.transform(df).groupby("buckets")\
+        .agg(F.count(F.col(column)).alias("count"))\
+        .orderBy("buckets").collect()
+    counts = [r for r in counts if r.buckets != None]
+
+    bucket_range[0] = min_value
+    bucket_range[-1] = max_value
+
+    deciles = {float(b): int(v.asDict()['count'])
+               for b, v in zip(bucket_range, counts)}
+    deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
+    return deciles
+
+def gen_deciles_string(column, df, min_value, max_value):
+    top10 = df.select(column).groupby(column).count()\
+        .orderBy(F.col(column).desc())\
+        .limit(10)\
+        .collect()
+
+    deciles = {top10[i].__getitem__(column): top10[i].__getitem__('count')
+            for i in range(len(top10))}
+    deciles = "'"+json.dumps(deciles).replace('"', '\"')+"'"
+    return deciles
+
+
+        
 if __name__ == "__main__":
     ds = LimoneroCalibration()
     ds.calibrate()

@@ -5,6 +5,7 @@ import copy
 import json
 from bisect import bisect
 import numpy as np
+import datetime
 
 class OperationModeling(object):
 
@@ -290,9 +291,10 @@ class AddColumnsOperationModel(GenericOperationModel):
         return {
             # "input_size_bytes_memory": 
             #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
-            "n_rows": self.input[0].n_rows + self.input[1].n_rows,
+            #"n_rows": self.input[0].n_rows + self.input[1].n_rows,
             "output_size_bytes_memory": self.output.size_bytes_memory,
-            "n_columns": self.output.n_columns,
+            #'n_rows_columns': (self.input[0].n_rows + self.input[1].n_rows)
+            #"n_columns": self.output.n_columns,
             "platform_id": self.platform_target
         }
 
@@ -530,13 +532,6 @@ class CleanMissingOperationModel(OperationModel):
         self.features["data_amplification"] = [self.data_amplification]
         return self.features
 
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "simple": info1["simple"] + info2["simple"],
-            "complex": info1["complex"] + info2["complex"]
-        }
-        return merged
-
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
@@ -618,10 +613,10 @@ class DataReaderOperationModel(OperationModel):
 
     def gen_model(self, platform_target=None):
         return {
-            "n_rows": self.output.n_rows,
+            #"n_rows": self.output.n_rows,
             "size_bytes_disk": self.output.size_bytes_disk * (1024*1024),
             #"output_size_bytes_memory": self.output.size_bytes_memory,
-            "n_columns": self.output.n_columns,
+            #"n_columns": self.output.n_columns,
             "platform_id": self.platform_target
         }
 
@@ -632,7 +627,7 @@ class DataWriterOperationModel(OperationModel):
         self.spark = []
         self.pandas = []
         self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        #elf.data_amplification = 1.0
         self.behavior = self.PHYSICAL_BEHAVIOR_WRITE
         self.n_input = 0
         self.n_output = 1
@@ -644,10 +639,10 @@ class DataWriterOperationModel(OperationModel):
             parameters["alias"] = parameters["alias"]["value"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
+    # def extract_features(self):
+    #     self.features["freq"] += 1
+    #     self.features["data_amplification"] = [self.data_amplification]
+    #     return self.features
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
@@ -657,8 +652,9 @@ class DataWriterOperationModel(OperationModel):
     def gen_model(self, platform_target=None):
         return {
             "input_size_bytes_memory": self.output.size_bytes_memory,
-            #"n_rows": self.output.n_rows,
-            #"n_columns": self.output.n_columns,
+            "n_rows": self.output.n_rows,
+            "n_columns": self.output.n_columns,
+            #n_rows_plus_columns': self.output.n_rows * self.output.n_columns,
             "platform_id": self.platform_target
         }
 
@@ -849,30 +845,35 @@ class FilterSelectionOperationModel(OperationModel):
         }
         return merged
     
-    def estimate_output(self, base_statistics):
-        self.input = copy.deepcopy(base_statistics[0])
-        self.output = copy.deepcopy(self.input)
-        self.total_input_size_bytes_memory = self.input.size_bytes_memory
-        parameters = self.convert()
-        #TODO: apenas uma expressão é suportada
-        self.n_expressions = len(parameters["expression"])
+    def parser_empression(self, parameters):
+        
+        expressions = []
         for expression in parameters["expression"]:
             tree = expression["tree"]
-
+            #print(tree)
+            # {'type': 'BinaryExpression', 
+            #  'operator': '<=', 
+            # 'left': {'type': 'Identifier', 'name': 'shipdate'}, 
+            # 'right': {'type': 'CallExpression', 'arguments': [{'type': 'Literal', 'value': '1998-09-16', 'raw': "'1998-09-16'"}], 'callee': {'type': 'Identifier', 'name': 'timestamp'}}}
             if tree["type"] == "BinaryExpression":
                 ops = {"operator": tree["operator"]}
+                
                 for side in ["left", "right"]:
                     s_type = tree[side]["type"]
+                    
                     if s_type == "Identifier":
                         s_value = tree[side]["name"]
                         ops["side"] = side
                     elif s_type == "Literal":
                         s_value = tree[side]["value"]
+                    elif s_type == "CallExpression" :
+                        s_type = "Literal"
+                        s_value = tree[side]['arguments'][0]['value']
+                        
                     ops[s_type] = s_value
             else:
                 raise Exception("Only BinaryExpression expression is supported")
-
-            col_name = ops["Identifier"]     
+   
             order = ops["side"]
             operator = ops["operator"]
 
@@ -881,73 +882,118 @@ class FilterSelectionOperationModel(OperationModel):
                     operator = operator.replace(">", "<")
                 else:
                     operator = operator.replace("<", ">")
+                    
+            expressions.append(ops)
+        return expressions  
 
+    
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(self.input)
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        parameters = self.convert()
+        
+        #TODO: apenas uma expressão é suportada
+        self.n_expressions = len(parameters["expression"])
+        expressions = self.parser_empression(parameters)
+        
+        for ops in expressions:
             to_remove = 0
+            col_name = ops["Identifier"]     
+            order = ops["side"]
+            operator = ops["operator"]
             
-            if (self.output.columns[col_name].deciles) and (self.output.columns[col_name].is_number() or self.output.columns[col_name].is_string()):
+            if (self.output.columns[col_name].deciles) and \
+               (self.output.columns[col_name].is_number() or self.output.columns[col_name].is_string() or \
+                self.output.columns[col_name].is_date()):
+                #print(ops)
                 value = ops["Literal"]
                 deciles = self.output.columns[col_name].deciles
-                if self.output.columns[col_name].is_number():
+                min_value = self.output.columns[col_name].min_value
+                max_value = self.output.columns[col_name].max_value
+                
+                if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
+                    if self.output.columns[col_name].is_date():
+                        value = float(datetime.datetime.strptime(value, '%Y-%m-%d').strftime('%s'))
+                        #print(value)
+                    else:
+                        value = float(value)
+
+                    min_value = float(min_value)
+                    max_value = float(max_value)
+                    
+                    
+                if not (min_value <= value <= max_value):
+                    self.output.remove_all_rows()
+                
+                elif self.output.columns[col_name].is_number():
                     deciles_keys = sorted(list(deciles.keys()))
-                
-                if operator == "==":
-                    if self.output.columns[col_name].is_number():
-                        idx = bisect(list(deciles.keys()), value)
-                
-                        for i in range(idx, len(deciles_keys)):
-                            key = deciles_keys[i]
-                            if idx != i:
+
+                    if operator == "==":
+                        if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
+                            idx = bisect(list(deciles.keys()), value)
+
+                            for i in range(idx, len(deciles_keys)):
+                                key = deciles_keys[i]
+                                if idx != i:
+                                    to_remove += deciles[key]
+                                    del deciles[key]
+                        else:
+
+                            for k in deciles:
+                                if k != value:
+                                    to_remove += deciles[k]
+
+
+                    elif operator == "!=":
+
+                        if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
+                            idx = bisect(list(deciles.keys()), value)
+
+                            for i in range(idx, len(deciles_keys)):
+                                key = deciles_keys[i]
+                                if idx == i:
+                                    to_remove += deciles[key]
+                                    del deciles[key]
+                        else:
+                            for k in deciles:
+                                if k == value:
+                                    to_remove += deciles[k]
+
+                    else:
+                        # descobrindo em qual idx do deciles o literal está
+                        if value in deciles:
+                            idx = list(deciles.keys()).index(value)
+                        else:
+                            idx = bisect(list(deciles.keys()), value)
+
+                        #print(f"Literal {value} | IDX: {idx}")
+                        
+                        to_remove = self.output.columns[col_name].missing_total
+                        if ">" in operator:
+                            for i in range(0, idx):
+                                key = deciles_keys[i]
+                                #print(f' Removing >: {key} --> {deciles[key]}')
                                 to_remove += deciles[key]
                                 del deciles[key]
-                    else:
-   
-                        for k in deciles:
-                            if k != value:
-                                to_remove += deciles[k]
-                            
-                            
-                elif operator == "!=":
-                    
-                    if self.output.columns[col_name].is_number():
-                        idx = bisect(list(deciles.keys()), value)
-
-                        for i in range(idx, len(deciles_keys)):
-                            key = deciles_keys[i]
-                            if idx == i:
+                        else:
+                            for i in range(idx+1, len(deciles_keys)):
+                                key = deciles_keys[i]
+                                #print(f' Removing <: {key} --> {deciles[key]}')
                                 to_remove += deciles[key]
                                 del deciles[key]
-                    else:
-                        for k in deciles:
-                            if k == value:
-                                to_remove += deciles[k]
-                    
-                else:
-                    if value in deciles:
-                        idx = list(deciles.keys()).index(value)
-                    else:
-                        idx = bisect(list(deciles.keys()), value)
-
-                    to_remove = 0
-                    if "<" in operator:
-                        for i in range(0, idx+1):
-                            key = deciles_keys[i]
-                            to_remove += deciles[key]
-                            del deciles[key]
-                    else:
-                        for i in range(idx, len(deciles_keys)):
-                            key = deciles_keys[i]
-                            to_remove += deciles[key]
-                            del deciles[key]
-
-                    self.output.columns[col_name].deciles = deciles
-                    
+                        
+                        self.output.columns[col_name].deciles = deciles  
 
             else:
                 self.output.recalculate() 
+                print("bad estimatition")
                 to_remove = int(self.output.n_rows * 0.25)
     
+        #print("original:", self.output.n_rows)
+        #print(to_remove)
         self.output.remove_n_rows(to_remove)  
-        
+        #print("after:", self.output.n_rows)
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -1191,7 +1237,7 @@ class JoinOperationModel(OperationModel):
             for l, r in zip(parameters.get(self.LEFT_ATTRIBUTES_PARAM), 
                             parameters.get(self.RIGHT_ATTRIBUTES_PARAM)):
                 
-                if self.input1.columns[l].is_number():
+                if self.input1.columns[l].is_number() or self.input1.columns[l].is_date():
                     # distinct_factor_l = (self.input1.columns[l].distinct_values) / \
                     #     (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total) 
                         
@@ -1202,13 +1248,19 @@ class JoinOperationModel(OperationModel):
                         [float(self.input1.columns[l].min_value), float(self.input1.columns[l].max_value)],
                         [float(self.input2.columns[r].min_value), float(self.input2.columns[r].max_value)]
                     )
+                    #print("interval_overlap:", interval_overlap)
+                    # quantos elementos distintos tem em relação ao número de linhas
+                    #coef_l = self.input1.columns[l].n_rows / self.input1.columns[l].distinct_values
+                    #coef_r = self.input2.columns[r].n_rows / self.input2.columns[r].distinct_values
+                    #print("coef_l:", coef_l)
+                    #print("coef_r:", coef_r)
                     
-                    coef_l = self.input1.columns[l].distinct_values / self.input1.columns[l].n_rows
-                    coef_r = self.input2.columns[r].distinct_values / self.input2.columns[r].n_rows
+                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) #* coef_l
+                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) #* coef_r
                     
-                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) * coef_l
-                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) * coef_r
-
+                    #print("distinct_factor_l", distinct_factor_l)
+                    #print("distinct_factor_r", distinct_factor_r)
+                    
                 elif self.input1.columns[l].is_string():
                     deciles1 = self.input1.columns[l].deciles
                     deciles2 = self.input1.columns[r].deciles
@@ -1220,6 +1272,7 @@ class JoinOperationModel(OperationModel):
                         # se existir interseção, será: N_rows - ausentes - top10_todos + top10_sim
                         distinct_factor_l = distinct_factor_l + sum([deciles1[k] for k in inter])
                         distinct_factor_r = distinct_factor_l + sum([deciles2[k] for k in deciles2])
+                    
                 else:
             
                     distinct_factor_l = (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total)
@@ -1229,7 +1282,7 @@ class JoinOperationModel(OperationModel):
                     # /  (self.input2.columns[r].distinct_values)
 
                 n_rows =  max([distinct_factor_l, distinct_factor_r])
-
+                #print("N_rows: ", n_rows)
         else:
             raise Exception("Join Type not supported.")
         
@@ -1239,6 +1292,7 @@ class JoinOperationModel(OperationModel):
         for i_col, o_col in zip(self.input1.columns, cols1):
             lemonade_col = self.input1.columns[i_col]
             lemonade_col.name = o_col
+            lemonade_col.missing_total = 0
             if n_rows < lemonade_col.n_rows:
                 diff = lemonade_col.n_rows - n_rows
                 lemonade_col.remove_n_rows(diff)
@@ -1250,6 +1304,7 @@ class JoinOperationModel(OperationModel):
         for i_col, o_col in zip(self.input2.columns, cols2):
             lemonade_col = self.input2.columns[i_col]
             lemonade_col.name = o_col
+            lemonade_col.missing_total = 0
             if n_rows < lemonade_col.n_rows:
                 diff = lemonade_col.n_rows - n_rows
                 lemonade_col.remove_n_rows(diff)

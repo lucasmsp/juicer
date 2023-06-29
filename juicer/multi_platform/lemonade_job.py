@@ -624,10 +624,11 @@ class LemonadeJob(object):
         for j in list(self.jobs.keys()):
             id_path = self.jobs[j]["id"]
             tasks = ppath[id_path]
-            self.jobs[j]["tasks"] = tasks
+            self.jobs[j]["tasks"] = list(set(tasks))
             if len(self.jobs[j]["tasks"]) == 1:
                 self.jobs.pop(j, None)
-
+                
+                
     def get_dataflow(self, v="v5"):
 
         if v == "v5":
@@ -659,22 +660,17 @@ class LemonadeJob(object):
 
         task_orders = self.find_jobs_order()
 
-        job_parent_idx = 2
-        task_idx = 3
-        time_idx = 4
-        scenario_idx = 9        
-        operations_idx = 10
+        task_idx = 1
+        time_idx = 2
+        operations_idx = 6
+        scenario_idx = 5
+        log_idx = 7
         
 
         dataflow = [0 for _ in range(len(self.jobs))]
         if self.cluster:
-            n_executors = self.cluster.executors
-            n_cores = n_executors * self.cluster.executor_cores
-            ram = n_executors * self.cluster.executor_memory
             cluster_id = self.cluster.cluster_id
         else:
-            n_cores = -1
-            ram = -1
             cluster_id = -1
 
         for order_job, job_id in enumerate(task_orders):
@@ -686,16 +682,13 @@ class LemonadeJob(object):
                 print(task_orders)
 
             dataflow[order_job] = [self.job_id,                             # job id
-                                   order_job+1,                             # job_order
-                                   "",                                      # job_parent
                                    "",                                      # task_id
                                    -1,                                      # time in seconds
                                    self.platform,                           # platform_id
                                    cluster_id,                              # cluster_id
-                                   n_cores,                                 # number of avaliable cores
-                                   ram,                                     # available RAM
                                    "",                                      # scenario
-                                   {}                                       # operations
+                                   {},                                      # operations
+                                   {}                                       # logs
                                    ]
 
             tasks = self.jobs[job_id]["tasks"]

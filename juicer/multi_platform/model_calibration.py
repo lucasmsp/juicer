@@ -157,27 +157,7 @@ class CostModel(object):
             if hlj:
                 self.lemonade_jobs[current_job_id] = hlj
             current_job_id += 1
-
-#     def gen_dag(self, lj):
-
-#         jobs_to_gen = {"single-input": lj}
-
-#         for lj in jobs_to_gen.values():
-#             try:
-#                 _ = lj.get_dataflow("v5")
-#                 graph = lj.graph
-#             except Exception as e:
-#                 msg = str(e)
-#                 if "[WARN] Skipping lemonade job because it contains an operation" in msg:
-#                     self.lemonade_jobs_excluded_by_operation.append(lj.job_id)
-#                 elif "[WARN] Skipping lemonade job because one of it's input data size is unknown" in msg:
-#                     self.lemonade_jobs_excluded_by_database.append(lj.job_id)
-#                 else:
-#                     print("gen_dag: " + str(e) + " - Lemonade_id: {}".format(lj.job_id))
-#                     print(traceback.format_exc())
-
-#         return graph
-    
+   
     
     def gen_output_returns(self, lj=None):
 
@@ -245,11 +225,14 @@ class CostModel(object):
 
         dataflow = []
         rows = []
-        operations_idx = 10
-
+        operations_idx = 6
+        logs_idx = 7
+        
         for idx, r in enumerate(tmp):
-            t = [r[i] for i in range(operations_idx)]
+            t = [r[i] for i in range(operations_idx)] + [r[logs_idx]]
+            
             dataflow.append(t)
+            
             row = {}
             for slug, op in r[operations_idx].items():
                 try:
@@ -270,9 +253,8 @@ class CostModel(object):
 
         rows = pd.DataFrame.from_dict(rows)
     
-        dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "job_order", "job_parents", "task_id",
-                                                    "total_seconds", "platform_id", "cluster_id",
-                                                    "n_cores", "memory_ram", "scenario"])
+        dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "task_id", "total_seconds", 
+                                                   "platform_id", "cluster_id", "scenario", "logs"])
         dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
         dataflow = dataflow.fillna(0)
         dataflow["total_seconds"] = dataflow["total_seconds"].replace(0.00, 0.001)
@@ -304,9 +286,9 @@ class CostModel(object):
 
 
         rows = []
-        operations_idx = 10
-        task_id_idx = 3
 
+        operations_idx = 6
+        task_id_idx = 1
         for idx, r in enumerate(tmp):
             task_id = r[task_id_idx]
             row = {"task_id": task_id}
@@ -356,33 +338,6 @@ class CostModel(object):
             workflow = self.get_workflow_by_id(workflow)
         lj = LemonadeJob(workflow, self.actions_ids, self.juicer_config, self.operation_slugs, mode)
         return lj
-
-    def where_to_run(self, rows):
-        self.load_models()
-        table = [{} for _ in range(len(rows))]
-        for m in self.models:
-            mm = self.models[m]
-            for i, r in enumerate(rows):
-                table[i][m] = mm.predict([r])
-
-        result = {"predictions": table}
-        duration = 0
-        flow = []
-
-        for t in table:
-            spark = t["Spark"]
-            pandas = t["Pandas"]
-            if spark > pandas:
-                flow.append("Pandas")
-                duration += pandas[0]
-            else:
-                flow.append("Spark")
-                duration += spark[0]
-
-        result["flow"] = flow
-        result["duration"] = duration
-        print("where_to_run: ", result)
-        return result
 
 #def main():
 #    return CostModel()
