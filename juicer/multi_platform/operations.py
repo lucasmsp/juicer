@@ -7,9 +7,14 @@ from bisect import bisect
 import numpy as np
 import datetime
 
+
+
+
 class OperationModeling(object):
 
+    
     def __init__(self):
+        
 
         self.all_operations = {
             # etl
@@ -165,7 +170,9 @@ class OperationModel(object):
     PHYSICAL_BEHAVIOR_RANGE = "wide-range-partitioning"
 
     PHYSICAL_BEHAVIOR_ML = "complex-ml"
-
+    
+    debug = False
+    
     def __init__(self, parameters):
         self.spark = None
         self.pandas = None
@@ -220,6 +227,7 @@ class OperationModel(object):
         else:
             platform_id = "6"
         return platform_id
+    
         
 
 class GenericOperationModel(OperationModel):
@@ -260,7 +268,7 @@ class AddColumnsOperationModel(GenericOperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics)
         self.total_input_size_bytes_memory = self.input[0].size_bytes_memory + self.input[1].size_bytes_memory
-        
+        self.total_input_rows = self.input[0].n_rows + self.input[1].n_rows
         n1 = self.input[0].n_rows
         n2 = self.input[1].n_rows
         n_rows = max([n1, n2])
@@ -289,10 +297,10 @@ class AddColumnsOperationModel(GenericOperationModel):
 
     def gen_model(self, platform_target=None):
         return {
-            # "input_size_bytes_memory": 
-            #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
-            #"n_rows": self.input[0].n_rows + self.input[1].n_rows,
-            "output_size_bytes_memory": self.output.size_bytes_memory,
+            #"input_size_bytes_memory": 
+            #    self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
+            "input_n_rows": self.input[0].n_rows + self.input[1].n_rows,
+            "output_n_rows": self.output.n_rows,
             #'n_rows_columns': (self.input[0].n_rows + self.input[1].n_rows)
             #"n_columns": self.output.n_columns,
             "platform_id": self.platform_target
@@ -319,9 +327,13 @@ class AddRowsOperationModel(GenericOperationModel):
         # Assume que as os dois datasets possuem mesmas colunas
         self.input = copy.deepcopy(base_statistics)
         self.total_input_size_bytes_memory = self.input[0].size_bytes_memory + self.input[1].size_bytes_memory
+        self.total_input_rows = self.input[0].n_rows + self.input[1].n_rows
         n_rows = sum([r.n_rows for r in base_statistics])
         self.output = copy.deepcopy(base_statistics[0])
         self.output.n_rows = n_rows
+        
+        # self.input[0].print_all_columns()
+        # self.input[1].print_all_columns()
 
         for key, value in base_statistics[0].columns.items():
 
@@ -353,10 +365,11 @@ class AddRowsOperationModel(GenericOperationModel):
     def gen_model(self, platform_target=None):
 
         return {
-            "n_rows": self.input[0].n_rows + self.input[1].n_rows,
+             "input_n_rows": self.input[0].n_rows + self.input[1].n_rows,
+            "output_n_rows": self.output.n_rows,
             # "input_size_bytes_memory": 
             #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
-            "output_size_bytes_memory": self.output.size_bytes_memory,
+            #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_columns": self.output.n_columns,
             "platform_id": self.platform_target
         }
@@ -410,30 +423,50 @@ class AggregationOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         parameters = self.convert()
         keys = parameters["attributes"]
+        
         self.input = copy.deepcopy(base_statistics[0])
+        #print(self.input)
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
-        distinct_values = 1
-        for k in keys:
-            distinct_values += self.input.columns[k].distinct_values
+        self.total_input_rows = self.input.n_rows
+        distinct_values = []
 
-        distinct_values = min([distinct_values, self.input.n_rows])
+        for k in keys:
+            distinct_values.append(self.input.columns[k].distinct_values)
+
+        distinct_values = max(distinct_values)
+
         
         self.output = BaseStatistics(n_rows=distinct_values)
 
         for k in keys:
             self.output.columns[k] = copy.deepcopy(base_statistics[0].columns[k])
             self.output.update_column(k, {"n_rows": distinct_values, "missing_total": 0})
-
+            if self.output.columns[k].deciles:
+                self.output.columns[k].deciles = {k: 1 for k in self.output.columns[k].deciles}
+            
+            
         for row in parameters["function"]:
             alias = row["alias"]
             att = row["attribute"]
             f = row['f']
             _type = 'INTEGER'
             
+            
             if f in ['count', 'size']:
                 _type = 'INTEGER'
+                min_value = 0
+                max_value = 999999
+                att_distinct_values = distinct_values
             elif f in ['sum', 'max', 'min', 'first', 'last', 'avg', 'mean']:
-                _type = base_statistics[0].columns[att].type
+                _type = self.input.columns[att].type
+                min_value = self.input.columns[att].min_value
+                max_value = self.input.columns[att].max_value
+                att_distinct_values = min([self.input.columns[att].distinct_values, distinct_values])
+            elif f in ['countDistinct']:
+                _type = 'INTEGER'
+                min_value = 0
+                max_value = 999999
+                att_distinct_values = min([self.input.columns[att].distinct_values, distinct_values])
             else:
                 raise Exception("Aggregation function not supported")
 
@@ -441,17 +474,27 @@ class AggregationOperationModel(OperationModel):
                 "n_rows": distinct_values,
                 "name": alias,
                 "type": _type,
-                "missing_total": 0
+                "missing_total": 0,
+                'min_value': min_value,
+                'max_value': max_value,
+                'distinct_values': att_distinct_values,
+                
+                
             })
             self.n_functions += 1
 
         self.output.recalculate()
-
+        if self.debug:
+            print("AggregationOperationModel | ", self.output)
+            print("AggregationOperationModel | columns:", self.output.columns)
+            for c in self.output.columns:
+                print(f"AggregationOperationModel | deciles column {c}:", self.output.columns[c].deciles)
         return [self.output]
 
     def gen_model(self, platform_target=None):
         return {
-            "n_rows": self.input.n_rows,
+            "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
             # "input_size_bytes_memory": self.input.size_bytes_memory,
             # "output_size_bytes_memory": self.output.size_bytes_memory,
             "data_ratio": self.input.n_rows / self.output.n_rows,
@@ -535,6 +578,7 @@ class CleanMissingOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         self.output = copy.deepcopy(base_statistics[0])
         parameters = self.convert()
 
@@ -558,7 +602,8 @@ class CleanMissingOperationModel(OperationModel):
                 for c in self.output.columns:
                     self.output.columns[c].missing_total = 0
                     self.output.columns[c].n_rows -= n_max_row
-
+            self.output.remove_random_deciles(n_max_row, except_list=[max_col])
+            
         elif self.mode == "REMOVE_COLUMN":
             for c in keys:
                 if self.output.columns[c].missing_total > 0:
@@ -566,9 +611,14 @@ class CleanMissingOperationModel(OperationModel):
         else:
             for c in self.output.columns:
                 self.output.columns[c].missing_total = 0
-
+        
         self.output.recalculate()
-
+        if self.debug:
+            print("CleanMissingOperationModel | output: ", self.output)
+            print("CleanMissingOperationModel | ", self.output.columns)
+            for c in self.output.columns:
+                print(f"CleanMissingOperationModel | {c}", self.output.columns[c].deciles)
+      
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -576,7 +626,8 @@ class CleanMissingOperationModel(OperationModel):
         return {
             #"input_size_bytes_memory": self.input.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
-            "n_rows": self.input.n_rows,
+            "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
             "reduced_ratio": self.input.n_rows / self.output.n_rows,
             "n_attributes": self.n_subset,
             "platform_id": self.platform_target
@@ -609,14 +660,15 @@ class DataReaderOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = 0
+        self.total_input_rows = self.output.n_rows
         return [self.output]
 
     def gen_model(self, platform_target=None):
         return {
-            #"n_rows": self.output.n_rows,
-            "size_bytes_disk": self.output.size_bytes_disk * (1024*1024),
+            "output_n_rows": self.output.n_rows,
+            #"size_megabytes_disk": self.output.size_megabytes_disk,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
-            #"n_columns": self.output.n_columns,
+            "n_columns": self.output.n_columns,
             "platform_id": self.platform_target
         }
 
@@ -645,14 +697,15 @@ class DataWriterOperationModel(OperationModel):
     #     return self.features
 
     def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.output.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         return [self.output]
 
     def gen_model(self, platform_target=None):
         return {
-            "input_size_bytes_memory": self.output.size_bytes_memory,
-            "n_rows": self.output.n_rows,
+            "input_n_rows": self.input.n_rows,
             "n_columns": self.output.n_columns,
             #n_rows_plus_columns': self.output.n_rows * self.output.n_columns,
             "platform_id": self.platform_target
@@ -685,13 +738,14 @@ class DataMigrationOperationModel(OperationModel):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         return [self.output]
 
     def gen_model(self, platform_target=None):
         return {
-            "input_size_bytes_memory": self.output.size_bytes_memory,
+            #"input_size_bytes_memory": self.output.size_bytes_memory,
             #'target_platform': self.platform_target,
-            #"n_rows": self.output.n_rows,
+            "n_rows": self.output.n_rows,
             #"n_columns": self.output.n_columns,
             "platform_id": "1" if self.platform_target == "4" else "4"
         }
@@ -891,6 +945,7 @@ class FilterSelectionOperationModel(OperationModel):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(self.input)
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         parameters = self.convert()
         
         #TODO: apenas uma expressão é suportada
@@ -903,16 +958,31 @@ class FilterSelectionOperationModel(OperationModel):
             order = ops["side"]
             operator = ops["operator"]
             
-            if (self.output.columns[col_name].deciles) and \
-               (self.output.columns[col_name].is_number() or self.output.columns[col_name].is_string() or \
-                self.output.columns[col_name].is_date()):
-                #print(ops)
+            if self.output.columns[col_name].deciles:
+                
                 value = ops["Literal"]
                 deciles = self.output.columns[col_name].deciles
                 min_value = self.output.columns[col_name].min_value
                 max_value = self.output.columns[col_name].max_value
                 
-                if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
+                if  self.output.columns[col_name].is_string():
+                    if operator == "==":
+                        for k in list(deciles.keys()):
+                            if k != value:
+                                to_remove += deciles[k]
+                                del deciles[k]
+                                
+                    elif operator == "!=":
+                        for k in list(deciles.keys()):
+                            if k == value:
+                                to_remove += deciles[k]
+                                del deciles[k]
+                                
+                    self.output.columns[col_name].deciles = deciles  
+                    
+                
+                elif self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
+
                     if self.output.columns[col_name].is_date():
                         value = float(datetime.datetime.strptime(value, '%Y-%m-%d').strftime('%s'))
                         #print(value)
@@ -921,44 +991,30 @@ class FilterSelectionOperationModel(OperationModel):
 
                     min_value = float(min_value)
                     max_value = float(max_value)
-                    
-                    
-                if not (min_value <= value <= max_value):
-                    self.output.remove_all_rows()
-                
-                elif self.output.columns[col_name].is_number():
+
+                    # if not (min_value <= value <= max_value):
+                    #     self.output.remove_all_rows()
+ 
                     deciles_keys = sorted(list(deciles.keys()))
 
                     if operator == "==":
-                        if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
-                            idx = bisect(list(deciles.keys()), value)
+                        idx = bisect(list(deciles.keys()), value)
 
-                            for i in range(idx, len(deciles_keys)):
-                                key = deciles_keys[i]
-                                if idx != i:
-                                    to_remove += deciles[key]
-                                    del deciles[key]
-                        else:
-
-                            for k in deciles:
-                                if k != value:
-                                    to_remove += deciles[k]
-
+                        for i in range(idx, len(deciles_keys)):
+                            key = deciles_keys[i]
+                            if idx != i:
+                                to_remove += deciles[key]
+                                del deciles[key]
 
                     elif operator == "!=":
 
-                        if self.output.columns[col_name].is_number() or self.output.columns[col_name].is_date():
-                            idx = bisect(list(deciles.keys()), value)
+                        idx = bisect(list(deciles.keys()), value)
 
-                            for i in range(idx, len(deciles_keys)):
-                                key = deciles_keys[i]
-                                if idx == i:
-                                    to_remove += deciles[key]
-                                    del deciles[key]
-                        else:
-                            for k in deciles:
-                                if k == value:
-                                    to_remove += deciles[k]
+                        for i in range(idx, len(deciles_keys)):
+                            key = deciles_keys[i]
+                            if idx == i:
+                                to_remove += deciles[key]
+                                del deciles[key]                                
 
                     else:
                         # descobrindo em qual idx do deciles o literal está
@@ -968,7 +1024,7 @@ class FilterSelectionOperationModel(OperationModel):
                             idx = bisect(list(deciles.keys()), value)
 
                         #print(f"Literal {value} | IDX: {idx}")
-                        
+
                         to_remove = self.output.columns[col_name].missing_total
                         if ">" in operator:
                             for i in range(0, idx):
@@ -982,18 +1038,30 @@ class FilterSelectionOperationModel(OperationModel):
                                 #print(f' Removing <: {key} --> {deciles[key]}')
                                 to_remove += deciles[key]
                                 del deciles[key]
-                        
-                        self.output.columns[col_name].deciles = deciles  
 
+                    self.output.columns[col_name].deciles = deciles  
+                    
             else:
                 self.output.recalculate() 
-                print("bad estimatition")
                 to_remove = int(self.output.n_rows * 0.25)
-    
+            
+            self.output.remove_random_deciles(to_remove, except_list=[col_name])
+
         #print("original:", self.output.n_rows)
         #print(to_remove)
-        self.output.remove_n_rows(to_remove)  
+        self.output.remove_n_rows(to_remove) 
+        self.output.recalculate() 
         #print("after:", self.output.n_rows)
+        
+        if self.debug:
+            print(f"FilterSelectionOperationModel | ", self.output)
+            self.output.print_all_columns()
+            for c in self.output.columns:
+                print(f"FilterSelectionOperationModel | {c}", self.output.columns[c].deciles)
+#         print("----")
+        #
+#         print("----")
+        
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -1002,8 +1070,9 @@ class FilterSelectionOperationModel(OperationModel):
             #"input_size_bytes_memory": self.input.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
             #"output_n_rows": self.output.n_rows,
-            "ratio": self.output.n_rows / self.input.n_rows,
+            #"ratio": self.output.n_rows / self.input.n_rows,
             'n_expressions': self.n_expressions,
             "platform_id": self.platform_target
         }
@@ -1198,6 +1267,7 @@ class JoinOperationModel(OperationModel):
         self.input1 = copy.deepcopy(base_statistics[0])
         self.input2 = copy.deepcopy(base_statistics[1])
         self.total_input_size_bytes_memory = self.input1.size_bytes_memory + self.input2.size_bytes_memory
+        self.total_input_rows = self.input1.n_rows + self.input2.n_rows
         parameters = self.convert()
         # Por enquanto só considero KEEP_RIGHT_KEYS_PARAM como false
         cols_output = []
@@ -1207,13 +1277,21 @@ class JoinOperationModel(OperationModel):
         
         cols1 = [ suffixes[0] + c for c in self.input1.columns]
         cols2 = [ suffixes[1] + c for c in self.input2.columns]
-
-        left_attributes =  [ suffixes[0] + c for c in parameters.get(self.LEFT_ATTRIBUTES_PARAM)]
+        
+        left_attributes  = [ suffixes[0] + c for c in parameters.get(self.LEFT_ATTRIBUTES_PARAM)]
         right_attributes = [ suffixes[1] + c for c in parameters.get(self.RIGHT_ATTRIBUTES_PARAM)]
         self.n_keys = len(left_attributes)
         join_type = parameters.get(self.JOIN_TYPE_PARAM, 'inner')\
                 .replace("_outer", "") 
+        
+        # print(left_attributes)
+        #print(self.input1.columns)
+        # print(self.input1.columns[parameters.get(self.LEFT_ATTRIBUTES_PARAM)[0]].deciles)
+        # print(right_attributes)
+        #print(self.input2.columns)
+        # print(self.input2.columns[parameters.get(self.RIGHT_ATTRIBUTES_PARAM)[0]].deciles)
 
+        confs_output = {}
         def getOverlap(a, b):
             a_s, a_e = a 
             b_s, b_e = b
@@ -1233,153 +1311,231 @@ class JoinOperationModel(OperationModel):
 
         elif join_type == "inner":
             self.join_type = 1
-            # n_rows = self.input1.n_rows * self.input2.n_rows
-            for l, r in zip(parameters.get(self.LEFT_ATTRIBUTES_PARAM), 
-                            parameters.get(self.RIGHT_ATTRIBUTES_PARAM)):
+            for l, r in zip(parameters.get(self.LEFT_ATTRIBUTES_PARAM)[:1], 
+                            parameters.get(self.RIGHT_ATTRIBUTES_PARAM)[:1]):
                 
                 if self.input1.columns[l].is_number() or self.input1.columns[l].is_date():
-                    # distinct_factor_l = (self.input1.columns[l].distinct_values) / \
-                    #     (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total) 
-                        
-                    # distinct_factor_r = (self.input2.columns[r].distinct_values) / \
-                    #     (self.input2.columns[r].n_rows - self.input2.columns[r].missing_total)
                 
                     interval_overlap = getOverlap(
                         [float(self.input1.columns[l].min_value), float(self.input1.columns[l].max_value)],
                         [float(self.input2.columns[r].min_value), float(self.input2.columns[r].max_value)]
                     )
-                    #print("interval_overlap:", interval_overlap)
-                    # quantos elementos distintos tem em relação ao número de linhas
-                    #coef_l = self.input1.columns[l].n_rows / self.input1.columns[l].distinct_values
-                    #coef_r = self.input2.columns[r].n_rows / self.input2.columns[r].distinct_values
-                    #print("coef_l:", coef_l)
-                    #print("coef_r:", coef_r)
+                    confs_output['overlap'] = interval_overlap
+
                     
-                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) #* coef_l
-                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) #* coef_r
+                    distinct_l = self.input1.columns[l].distinct_values
+                    distinct_r = self.input2.columns[r].distinct_values
                     
-                    #print("distinct_factor_l", distinct_factor_l)
-                    #print("distinct_factor_r", distinct_factor_r)
+                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) /  distinct_l
+                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) / distinct_r
+                    
+                    n_rows =  (distinct_factor_l * distinct_factor_r) * min([distinct_l, distinct_r])
                     
                 elif self.input1.columns[l].is_string():
                     deciles1 = self.input1.columns[l].deciles
-                    deciles2 = self.input1.columns[r].deciles
-                    inter = set(deciles1.keys()).intersect(set(deciles2.keys()))
+                    deciles2 = self.input2.columns[r].deciles
+                    inter = set(deciles1.keys()).intersection(set(deciles2.keys()))
                     
-                    distinct_factor_l = self.input1.columns[l].n_rows - self.input1.columns[l].missing_total - sum([deciles1[k] for k in deciles1])
-                    distinct_factor_r = self.input1.columns[r].n_rows - self.input1.columns[r].missing_total - sum([deciles2[k] for k in deciles2])
-                    if len(inter) > 0:
-                        # se existir interseção, será: N_rows - ausentes - top10_todos + top10_sim
-                        distinct_factor_l = distinct_factor_l + sum([deciles1[k] for k in inter])
-                        distinct_factor_r = distinct_factor_l + sum([deciles2[k] for k in deciles2])
+                    interval_overlap = [max([self.input1.columns[l].min_value, self.input2.columns[r].min_value]), 
+                                        min([self.input1.columns[l].max_value, self.input2.columns[r].max_value])]
                     
+                    confs_output['overlap'] = interval_overlap
+
+                    
+                    
+                    # distinct_factor_l = (self.input1.columns[l].distinct_values)
+                    # distinct_factor_r = (self.input2.columns[r].distinct_values) 
+                    # n_rows =  max([distinct_factor_l, distinct_factor_r])
+                    
+                    distinct_l = self.input1.columns[l].distinct_values
+                    distinct_r = self.input2.columns[r].distinct_values
+                    
+                    distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) /  distinct_l
+                    distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) / distinct_r
+                    
+                    #n_rows =  (distinct_factor_l * distinct_factor_r) *  min([distinct_l, distinct_r])
+                    n_rows = max([self.input1.columns[l].n_rows, self.input2.columns[r].n_rows])
                 else:
             
                     distinct_factor_l = (self.input1.columns[l].n_rows - self.input1.columns[l].missing_total)
-                     # / (self.input1.columns[l].distinct_values)
-
                     distinct_factor_r = (self.input2.columns[r].n_rows - self.input2.columns[r].missing_total) 
-                    # /  (self.input2.columns[r].distinct_values)
 
-                n_rows =  max([distinct_factor_l, distinct_factor_r])
-                #print("N_rows: ", n_rows)
+                    n_rows =  max([distinct_factor_l, distinct_factor_r])
+                    
+                # backup: 20230901
+                #n_rows =  min([distinct_factor_l, distinct_factor_r])
+                
+                if self.debug:
+                    print(f"JoinOperation | distinct_factor_l {distinct_factor_l} - distinct_factor_r {distinct_factor_r} - n_rows {n_rows} - ")
+
         else:
             raise Exception("Join Type not supported.")
         
-    
+        n_rows = int(n_rows)
         self.output = BaseStatistics(n_rows=n_rows)
-
+        
         for i_col, o_col in zip(self.input1.columns, cols1):
             lemonade_col = self.input1.columns[i_col]
             lemonade_col.name = o_col
-            lemonade_col.missing_total = 0
-            if n_rows < lemonade_col.n_rows:
-                diff = lemonade_col.n_rows - n_rows
-                lemonade_col.remove_n_rows(diff)
-            elif n_rows > lemonade_col.n_rows:
-                lemonade_col.n_rows = n_rows
-        
+            lemonade_col.missing_total = 0  
+
+            lemonade_col.update_rows(n_rows)
             self.output.columns[o_col] = lemonade_col
+
+        new_min, new_max = confs_output['overlap']
+        for o_col in left_attributes:
+            self.output.columns[o_col].min_value = max([new_min, self.output.columns[o_col].min_value])
+            self.output.columns[o_col].max_value = min([new_max, self.output.columns[o_col].max_value])
+
 
         for i_col, o_col in zip(self.input2.columns, cols2):
             lemonade_col = self.input2.columns[i_col]
             lemonade_col.name = o_col
             lemonade_col.missing_total = 0
-            if n_rows < lemonade_col.n_rows:
-                diff = lemonade_col.n_rows - n_rows
-                lemonade_col.remove_n_rows(diff)
-            elif n_rows > lemonade_col.n_rows:
-                lemonade_col.n_rows = n_rows
-        
+
+            lemonade_col.update_rows(n_rows)
             self.output.columns[o_col] = lemonade_col
 
+        for o_col in right_attributes:    
+            new_min, new_max = confs_output['overlap']
+            self.output.columns[o_col].min_value = max([new_min, self.output.columns[o_col].min_value])
+            self.output.columns[o_col].max_value = min([new_max, self.output.columns[o_col].max_value])
 
         self.output.recalculate()
-          
+        if self.debug:
+            print("JoinOperation | input 1")
+            self.input1.print_all_columns()
+            print("JoinOperation | input 2")
+            self.input2.print_all_columns()
+            print(f"JoinOperation |", self.output)
+            self.output.print_all_columns()
+        
         return [self.output]
 
     def gen_model(self, platform_target=None):
-        ds = sorted([2 if self.input1.size_bytes_memory >= (128*(1024*1024)) else 1, 
-                     2 if self.input2.size_bytes_memory >= (128*(1024*1024)) else 1], reverse=True)
-        return {
-            "input_n_rows": self.total_input_size_bytes_memory,
-            "output": self.output.size_bytes_memory,
-            #"input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
-            #"output_size_bytes_memory": self.output.size_bytes_memory,
-            'df1-mode': ds[0],
-            'df2-mode': ds[1],
-            "join_type": self.join_type,
-            # 'n_keys': self.n_keys,
-            "platform_id": self.platform_target
-        }
+        ds = [v for v in [self.input1.size_bytes_memory, self.input2.size_bytes_memory] if v >= (128*(1024*1024))]
+        join_implementation = len(ds)
+
+        if platform_target == 4:
+            
+            return {
+                "input_size": self.total_input_size_bytes_memory,
+                "output_size": self.output.size_bytes_memory,
+                "join_type": self.join_type,
+                "platform_id": self.platform_target
+            }
+        else:
+            return {
+                "input_size": self.total_input_size_bytes_memory,
+                "ooutput_sizeutput": self.output.size_bytes_memory, # ooutput_sizeutput
+                #"input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
+                #"output_size_bytes_memory": self.output.size_bytes_memory,
+                'join-implementation': join_implementation,
+                "join_type": self.join_type,
+                # 'n_keys': self.n_keys,
+                "platform_id": self.platform_target
+            }
 
 
 class KMeansClusteringOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ["max_iterations", "tol", "init_mode", "type"]
-        self.pandas = ["max_iter", "tol", "init", "type"]
-        self.features = {"freq": 0, "max_iter": 0,
-                         "random-init": 0, "plusplus-init": 0, "mini-type": 0, "traditional-type": 0}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
+        self.features = {}
 
-    def convert(self, parameters):
-        pass
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
 
-    def extract_features(self):
-        self.features["freq"] += 1
+        if "value" in parameters.get("features", {}):
+            parameters["features"] = parameters["features"]["value"]
 
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters.get("max_iterations", 1000))  # TODO
-            init_key = "init_mode"
+        if "alias" in parameters:
+            if "value" in parameters.get("alias", {}):
+                parameters["alias"] = parameters["alias"]["value"]
         else:
-            self.features["max_iter"] = int(self.parameters.get("max_iterations", 1000))
-            init_key = "init"
+            parameters["alias"] = "prediction"
 
-        # self.features["tol"] = float(self.parameters.get("tolerance"))
-        init_mode = self.parameters.get(init_key, 'K-Means++')
-        if "random" in init_mode.lower():
-            self.features["random-init"] += 1
+        #print(parameters)
+        if "value" in parameters.get("max_iterations", {}):
+            parameters["max_iterations"] = parameters["max_iterations"]["value"]
+        
+        if "value" in parameters.get("number_of_clusters", {}):
+            parameters["number_of_clusters"] = parameters["number_of_clusters"]["value"]
+            
+        if "value" in parameters.get("tolerance", {}):
+            parameters['tolerance'] = parameters["tolerance"]['value']
+            
+        # to spark
+        if int(platform_id) == 1:
+            parameters["paramgrid"] = {"max_iterations": parameters["max_iterations"]}
+            parameters['type'] = "kmeans"
         else:
-            self.features["plusplus-init"] += 1
+            parameters['type'] = 'K-Means'
+            parameters['n_clusters'] = parameters["number_of_clusters"]
+            parameters['tol'] = parameters["tolerance"]
+            parameters['max_iter'] = parameters["max_iterations"]
+            
+        self.features['k'] = int(self.parameters["number_of_clusters"])
+        self.features["max_iter"] = int(self.parameters.get("max_iterations", 1000))
+        
+        return parameters
 
-        type_mode = self.parameters.get("type", "K-Means")
-        if "means" in type_mode.lower():
-            self.features["traditional-type"] += 1
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        platform_id = self.get_platform_target()
+        parameters = self.convert(platform_id)
+        self.features_col = parameters["features"]
+        # if len(col_features) > 0:
+        #     self.output.col_as_features
+        
+        v_per_k = self.total_input_rows//self.features['k']
+        deciles = {}
+        for i in range(self.features['k']):
+            deciles[i] = v_per_k
+        diff = self.total_input_rows - sum(deciles.values())
+        deciles[0] += diff
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_values': self.features['k'],
+            'min_value': 0,
+            'max_value': self.features['k'],
+        })
+        self.output.columns[parameters["alias"]].deciles = deciles
+        self.output.recalculate()
+        
+        if self.debug:
+            self.output.print_all_columns()
+            for col in self.output.columns:
+                print(f"KMeansClusteringOperationModel: col {col}:", self.output.columns[col].deciles)
+        return [self.output]
+    
+    def gen_model(self, platform_target=None):
+        
+        if platform_target == 4:
+            return {
+                #v1
+                "n_rows": self.input.n_rows,
+                "max_iter":  self.features["max_iter"],
+                'k': self.features['k'],
+                "n_features": len(self.features_col),
+                "platform_id": self.platform_target
+            }
         else:
-            self.features["mini-type"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-            "random-init": info1["random-init"] + info2["random-init"],
-            "plusplus-init": info1["plusplus-init"] + info2["plusplus-init"],
-            "traditional-type": info1["traditional-type"] + info2["traditional-type"],
-            "mini-type": info1["mini-type"] + info2["mini-type"]
-        }
-        return merged
+            return {
+                #v1
+                 "n_rows": self.input.n_rows,
+                "max_iter":  self.features["max_iter"],
+                'k': self.features['k'],
+                "n_features": len(self.features_col),
+                "platform_id": self.platform_target
+            }
 
 
 class KbinsDiscretizerOperationModel(GenericOperationModel):
@@ -1574,19 +1730,28 @@ class ProjectionOperationModel(OperationModel):
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
-        self.output = BaseStatistics(n_rows=self.input.n_rows)
-
+        self.total_input_rows = self.input.n_rows
+        self.output = copy.deepcopy(base_statistics[0])
+        
         parameters = self.convert()
-        for col in parameters["attributes"]:
-            if col in self.input.columns:
-                self.output.columns[col] = self.input.columns[col]
+        for col in list(self.output.columns.keys()):
+            if col not in parameters["attributes"]:
+                del self.output.columns[col]
+#         self.output = BaseStatistics(n_rows=self.input.n_rows)
+
+#         parameters = self.convert()
+#         for col in parameters["attributes"]:
+#             if col in self.input.columns:
+#                 self.output.columns[col] = copy.deepcopy(self.input.columns[col])
         self.output.recalculate()
+        # print(self.input)
+        # print(self.output)
         return [self.output]
 
     def gen_model(self, platform_target=None):
 
         return {
-            "n_rows": self.input.n_rows,
+            "input_n_rows": self.input.n_rows,
             #"input_size_bytes_memory": self.input.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "ratio_reduction_columns": self.output.n_columns / self.input.n_columns,
@@ -1674,15 +1839,65 @@ class RemoveDuplicatedRowsOperationModel(OperationModel):
             parameters["attributes"] = parameters["attributes"]["value"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.output.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+        parameters = self.convert()
 
-    def merge_features_info(self, info1, info2):
-        merged = {
+        if "attributes" in parameters:
+            keys = parameters["attributes"]
+        else:
+            keys = list(self.output.columns.keys())
+        
+        self.n_subset = len(keys)
+        distinct_values = []
+        for k in keys:
+            distinct_values.append(self.input.columns[k].distinct_values)
+        
+        def argmax(iterable):
+            return max(enumerate(iterable), key=lambda x: x[1])[0]
+        
+        distinct_values_i = argmax(distinct_values)
+        distinct_values_max = distinct_values[distinct_values_i]
+        distinct_values_i = keys[distinct_values_i]
+        
+        
+        if self.output.n_rows > distinct_values_max:
+            to_remove = self.output.n_rows - distinct_values_max
+            # print("distinct_values_max:", distinct_values_max)
+            if self.debug:
+                print(f"RemoveDuplicatedRowsOperationModel | distinct_values_max: {distinct_values_max} - to_remove: {to_remove}")
+            self.output.remove_random_deciles(to_remove, except_list=[])
+            self.output.remove_n_rows(to_remove) 
+                    
+            new_rows = self.output.n_rows
+
+            for k, v in zip(keys, distinct_values):
+                if v > new_rows:
+                    v = new_rows
+                self.output.columns[k].distinct_values = v
+
+            self.output.recalculate()
+        # print("In-remove:",self.input)
+        # print("Out-remove:", self.output)
+        # 
+        if self.debug:
+            print("RemoveDuplicatedRowsOperationModel | output: ", self.output)
+            print("RemoveDuplicatedRowsOperationModel | ", self.output.columns)
+            for c in self.output.columns:
+                print(f"RemoveDuplicatedRowsOperationModel | deciles: {c}", self.output.columns[c].deciles)
+        return [self.output]
+
+    def gen_model(self, platform_target=None):
+
+        return {
+            "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
+            "n_attributes": self.n_subset,
+            "platform_id": self.platform_target
         }
-        return merged
 
 
 class RegressorModelOperationModel(GenericOperationModel):
@@ -1723,8 +1938,10 @@ class ReplaceValueOperationModel(OperationModel):
         return self.features
 
     def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.output.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         parameters = self.convert()
 
         if "attributes" in parameters:
@@ -1739,7 +1956,8 @@ class ReplaceValueOperationModel(OperationModel):
     def gen_model(self, platform_target=None):
 
         return {
-            "n_rows": self.output.n_rows,
+            "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_attributes": self.n_subset,
             "platform_id": self.platform_target
@@ -1757,28 +1975,75 @@ class SampleOperationModel(OperationModel):
 
     def convert(self, platform_id=None):
         parameters = self.parameters.copy()
-        if "value" in parameters.get("attributes", {}):
-            parameters["attributes"] = parameters["attributes"]["value"]
+        
+        # Temporary                  
+        if isinstance(parameters.get("type"), dict):
+            if isinstance(parameters["type"]["value"], dict):
+                  parameters["type"] = parameters["type"]["value"]['value']
+            else:
+                  parameters["type"] = parameters["type"]["value"]
+
+                  
+        if isinstance(parameters.get("value"), dict):
+            if isinstance(parameters["value"]["value"], dict):
+                  parameters["value"] = parameters["value"]["value"]['value']
+            else:
+                  parameters["value"] = parameters["value"]["value"]
+                  
+        if "fraction" in parameters:
+            if isinstance(parameters["fraction"], dict):
+                 parameters["fraction"] = parameters["fraction"]["value"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        type = self.parameters["type"]
-        if type == "percent":
-            self.features[type] = float(self.parameters["fraction"])
-            self.data_amplification = self.features[type]
-        else:
-            self.features[type] = int(self.parameters["value"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
+#     def extract_features(self):
+#         type = self.parameters["type"]
+#         if type == "percent":
+#             self.features[type] = float(self.parameters["fraction"])
+#             self.data_amplification = self.features[type]
+#         else:
+#             self.features[type] = int(self.parameters["value"])
+#         self.features["data_amplification"] = [self.data_amplification]
+#         return self.features
 
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "percent": max([info1["percent"], info2["percent"]]),
-            "value": max([info1["value"], info2["value"]]),
-            "head": max([info1["head"], info2["head"]]),
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+        self.output = copy.deepcopy(base_statistics[0])
+        parameters = self.convert()
+        
+        type_mode = parameters["type"]
+        
+        if "head" == type_mode:
+            n_rows = parameters["value"]
+        #else:
+        #    print("Not supported yet ")
+            
+        n_rows = int(parameters["value"])
+
+        n_rows_to_remove = self.output.n_rows - n_rows
+
+        if n_rows_to_remove > 0:
+            self.output.remove_random_deciles(n_rows_to_remove, except_list=[])
+            self.output.remove_n_rows(n_rows_to_remove)
+            
+            self.output.recalculate() 
+            if self.debug:
+                print("SampleOperationModel | output: ", self.output)
+                for c in self.output.columns:
+                    print("SampleOperationModel | input deciles: ", self.input.columns[c].deciles)
+                    print("SampleOperationModel | output deciles: ", self.output.columns[c].deciles)
+            
+        return [self.output]
+
+    def gen_model(self, platform_target=None):
+
+        return {
+            "input_n_rows": self.input.n_rows,
+            "output_n_rows": self.output.n_rows,
+            "reduction_ratio": self.input.n_rows / self.output.n_rows,
+            "platform_id": self.platform_target
         }
-        return merged
 
 
 class SetIntersectionOperationModel(GenericOperationModel):
@@ -1812,8 +2077,10 @@ class SortOperationModel(OperationModel):
         return self.features
 
     def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.output.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         return [self.output]
 
     def gen_model(self, platform_target=None):
@@ -1821,7 +2088,7 @@ class SortOperationModel(OperationModel):
         keys = parameters["attributes"]
 
         return {
-            "n_rows": self.output.n_rows,
+            "input_n_rows": self.input.n_rows,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_columns": self.output.n_columns,
             "ratio_key": len(keys) / self.output.n_columns,
@@ -1951,17 +2218,23 @@ class SVMClassificationOperationModel(OperationModel):
         self.input = copy.deepcopy(base_statistics[0])
         self.output = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
 
         parameters = self.convert()
         self.features_col = parameters["features"]
         # if len(col_features) > 0:
         #     self.output.col_as_features
-
+        
         self.output.create_new_column(**{
             "name": parameters["alias"],
             "type": "DOUBLE",
-            "missing_total": 0
+            "missing_total": 0,
+            'distinct_columns': 2,
+            'min_value': 0,
+            'max_value': 1
         })
+        self.output.recalculate()
+
         return [self.output]
 
 #     def gen_model(self):
@@ -2038,6 +2311,7 @@ class TransformationOperationModel(OperationModel):
 
         self.input = copy.deepcopy(base_statistics[0])
         self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
         self.output = copy.deepcopy(base_statistics[0])
         parameters = self.convert()
 
@@ -2050,6 +2324,8 @@ class TransformationOperationModel(OperationModel):
             self.n_columns += (json.dumps(exp).count("Identifier")+1)**2 * self.input.n_rows
             if new_col in self.output.columns:
                 self.overwrite += 1
+            
+            col_name = None
             if "name" in exp["tree"]:
                 col_name = exp["tree"]["name"]
             elif "name" in exp["tree"].get("left", []):
@@ -2058,11 +2334,26 @@ class TransformationOperationModel(OperationModel):
                 col_name = exp["tree"]["right"]["name"]
             elif "name" in exp["tree"].get("arguments", [[]])[0]:
                 col_name = exp["tree"].get("arguments", [[]])[0]["name"]
+            
+            if col_name:
+                col_object = copy.deepcopy(self.output.columns[col_name])
+                col_object.name = new_col
+                self.output.columns[new_col] = col_object
+            else:
+                # literal
+                # todo: ler o literal e pegar o valor exato
+                self.output.create_new_column(**{
+                    "n_rows": self.output.n_rows,
+                    "name": new_col,
+                    "type": "INTEGER",
+                    "missing_total": 0,
+                    'min_value': 1,
+                    'max_value': 1,
+                    'distinct_values': 1,
 
-            col_object = copy.deepcopy(self.output.columns[col_name])
-            col_object.name = new_col
+                })
 
-            self.output.columns[new_col] = col_object
+            
 
         self.output.recalculate()
 

@@ -2115,16 +2115,16 @@ class ClusteringModelOperation(Operation):
                 if not lda:
                     df_aux = pipeline_model.transform({input})
                     
-                    evaluator = ClusteringEvaluator(
-                        predictionCol='{prediction}', featuresCol=final_features)
-                    metric_rows.append(['{silhouette_euclidean}', 
-                        evaluator.evaluate(df_aux)])
+                    #evaluator = ClusteringEvaluator(
+                    #    predictionCol='{prediction}', featuresCol=final_features)
+                    #metric_rows.append(['{silhouette_euclidean}', 
+                    #    evaluator.evaluate(df_aux)])
 
-                    evaluator = ClusteringEvaluator(
-                        distanceMeasure='cosine', predictionCol='{prediction}', 
-                        featuresCol=final_features)
-                    metric_rows.append(['{silhouette_cosine}', 
-                        evaluator.evaluate(df_aux)])
+                    #evaluator = ClusteringEvaluator(
+                    #    distanceMeasure='cosine', predictionCol='{prediction}', 
+                    #    featuresCol=final_features)
+                    #metric_rows.append(['{silhouette_cosine}', 
+                    #    evaluator.evaluate(df_aux)])
     
                     if hasattr(clustering_model, 'clusterCenters'):
                         metric_rows.append([

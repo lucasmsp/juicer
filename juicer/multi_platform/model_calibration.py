@@ -108,10 +108,36 @@ class CostModel(object):
                     (current_job_log["l_status"].isin(["ERROR", "PENDING", "CANCELED"])) |
                     (current_job_log["message"].isin(["Tarefa executando (usando dados em cache)",
                                                       "Task running (cached data)"]))
-                ]) == 0:
-
+                ]) == 0:           
+                    
+                    if current_job_log["workflow_id"].iloc[0] == 81:
+                        idx = current_job_log.index[current_job_log["message"].str.contains("Records:")][0]
+                        current_job_log = current_job_log.iloc[0:idx+1]
+                    
+                    else:
+                        # creating a task-id to the internal migration task
+                        current_job_log['task_id'] = current_job_log['task_id'].mask(current_job_log["message"].str.contains("was converted"), other=current_job_log['task_id'].apply('{}-migration'.format))
+                    
                     current_job_log = current_job_log[["task_id", "l_status", "operation_id", "l_date", 'message']]\
-                            .to_dict('records')
+                        .groupby(['task_id', "operation_id"]).agg(MIN=("l_date", min), MAX=("l_date", max))\
+                        .sort_values(["MAX", "MIN"])\
+                        .reset_index()
+                    
+                    seconds = []
+                    last = None
+                    for idx, row in current_job_log.iterrows():
+                        if idx  == 0:
+                            last = row["MAX"]
+                            d = max([(row["MAX"] - row["MIN"]).seconds, 0.01])
+                            seconds.append(d)
+                        else:
+                            d = max([(row["MAX"] - last).seconds, 0.01])
+                            seconds.append(d)
+                            last = row["MAX"]
+
+                    current_job_log["seconds"] = seconds
+                    
+                    current_job_log = current_job_log.to_dict('records')
                     return current_job_log
 
         self.lemonade_jobs_excluded_by_logs.append(current_job_id)
@@ -143,20 +169,26 @@ class CostModel(object):
     def data_gathering_multiple(self, ids=None, mode="break-by-actions"):
         if ids:
             ids = sorted(ids)
-            current_job_id = ids[0]
-            last_job_id = ids[-1]
+            log(f"Starting from job: {ids[0]}")
+            log(f"Last Job: {ids[-1]}")
+
+            for current_job_id in ids:
+                hlj = self.data_gathering_one(current_job_id, mode)
+                if hlj:
+                    self.lemonade_jobs[current_job_id] = hlj
+
         else:
             current_job_id = self.current_job_id
             last_job_id = self.last_job_id
 
-        log(f"Starting from job: {current_job_id}")
-        log(f"Last Job: {last_job_id}")
+            log(f"Starting from job: {current_job_id}")
+            log(f"Last Job: {last_job_id}")
 
-        while current_job_id <= last_job_id:
-            hlj = self.data_gathering_one(current_job_id, mode)
-            if hlj:
-                self.lemonade_jobs[current_job_id] = hlj
-            current_job_id += 1
+            while current_job_id <= last_job_id:
+                hlj = self.data_gathering_one(current_job_id, mode)
+                if hlj:
+                    self.lemonade_jobs[current_job_id] = hlj
+                current_job_id += 1
    
     
     def gen_output_returns(self, lj=None):
@@ -199,7 +231,7 @@ class CostModel(object):
 
         return rows
     
-    def gen_dataflow_model_v5(self, lj=None):
+    def gen_dataflow_model_v5(self, lj=None, base_calibration=True):
 
         if lj:
             jobs_to_gen = {"single-input": lj}
@@ -208,8 +240,9 @@ class CostModel(object):
     
         tmp = []
         for lj in jobs_to_gen.values():
+            
             try:
-                jobs = lj.get_dataflow("v5")
+                jobs = lj.get_dataflow("v5", base_calibration)
                 if jobs:
                     for d in jobs:
                         tmp.append(d)
@@ -230,21 +263,19 @@ class CostModel(object):
         
         for idx, r in enumerate(tmp):
             t = [r[i] for i in range(operations_idx)] + [r[logs_idx]]
-            
             dataflow.append(t)
             
             row = {}
             for slug, op in r[operations_idx].items():
-                try:
-                    f1 = op.gen_model(platform_target=1)
-                    f4 = op.gen_model(platform_target=4)
-                except Exception as e:
-                    print(op.input)
-                    print(op.output)
-                    print(tmp[idx])
-                    print(str(e))
-                    traceback.print_exc()
-                    
+                #try:
+                f1 = op.gen_model(platform_target=1)
+                f4 = op.gen_model(platform_target=4)
+                #except Exception as e:
+                #    print(op.input)
+                #    print(op.output)
+                #    print(tmp[idx])
+                #    print(str(e))
+                #    traceback.print_exc()
                 for param, v in f1.items():
                     row["{}-spark-{}".format(slug, param)] = v
                 for param, v in f4.items():
@@ -297,6 +328,7 @@ class CostModel(object):
                     row["slug"] = slug
                     row["output"] = op.output
                     row['input-size'] = op.total_input_size_bytes_memory
+                    row['input-rows'] = op.total_input_rows
                     f1 = op.gen_model(platform_target=1)
                     f4 = op.gen_model(platform_target=4)
                 except Exception as e:

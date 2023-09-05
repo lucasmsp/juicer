@@ -23,6 +23,7 @@ import datetime
 from gettext import gettext
 from juicer.multi_platform.auxiliar_services import get_sql_connection
 from bisect import bisect
+import math
 
 # LIBRARY_PATH = os.path.expanduser("/home/lucasmsp/workspace/bigsea/docker-lemonade/juicer/")
 # sys.path.insert(0, LIBRARY_PATH)
@@ -95,7 +96,7 @@ class Dataset(object):
             self.storage_name = result["storage"]['name']
             self.storage_type = result["storage"]['type']
             self.stats = BaseStatistics(n_rows=result["estimated_rows"])
-            self.stats.size_bytes_disk = self.disk_size
+            self.stats.size_megabytes_disk = self.disk_size
 
             for column in result["attributes"]:
                 self.stats.create_new_column(**column)
@@ -159,10 +160,9 @@ class BaseStatistics(object):
             .format(self.n_rows, self.size_bytes_memory, self.n_columns)
 
     def __init__(self, n_rows):
-        self.size_bytes_disk = None
+        self.size_megabytes_disk = None
         self.size_bytes_memory = None
-        self.n_columns = None
-        self.columns = None
+        self.n_columns = 0
         self.n_rows = n_rows
         self.columns = {}
         self.cols_as_features = {}
@@ -185,6 +185,20 @@ class BaseStatistics(object):
             self.columns[column].estimate_size()
         self.size_bytes_memory = sum([c.estimated_column_size_total for c in self.columns.values()])
         self.n_rows = max([self.columns[c].n_rows for c in self.columns])
+        self._check_state_validation()
+    
+    def _check_state_validation(self):
+        for column in self.columns:
+            if self.columns[column].estimated_column_size_total < 0:
+                raise Exception(f"col {column} - estimated_column_size_total < 0: ", self.columns[column].estimated_column_size_total)
+            
+            if (self.columns[column].distinct_values < 1) and (self.columns[column].n_rows > 0):
+                raise Exception(f"col {column} - distinct_values <= 0: ", self.columns[column].distinct_values)
+                
+            if self.columns[column].deciles:
+                total_deciles = sum(list(self.columns[column].deciles.values()))
+                if  (total_deciles - 100) > self.columns[column].n_rows:
+                    raise Exception(f"col {column} - total sum of deciles {total_deciles} > n_rows ", self.columns[column].n_rows)
     
     def remove_n_rows(self, rows_to_remove):
 
@@ -206,7 +220,31 @@ class BaseStatistics(object):
             
         self.recalculate()
         
-        
+    def print_all_columns(self):
+        print("Statistics(rowCount={}, sizeInBytesMemory={}, nColumns={})"\
+            .format(self.n_rows, self.size_bytes_memory, self.n_columns))
+        for c in self.columns:
+            print(self.columns[c])
+
+
+    def remove_random_deciles(self, rows_to_remove, except_list=[]):
+        """
+        Consideramos uma distribuição uniforme
+        """
+        if rows_to_remove > 0:
+            for column in self.columns:
+                #print("Initial:", self.columns[column].deciles)
+                if self.columns[column].type != "TEXT":
+                    if column not in except_list:
+                        if self.columns[column].deciles:
+                            #total_rows = sum(list(self.columns[column].deciles.values()))
+                            total_rows = self.columns[column].n_rows
+                            ratio = rows_to_remove/total_rows
+                            #print(f"{column} -> {ratio} ({rows_to_remove}//{total_rows}")
+                            for d in self.columns[column].deciles:
+                                self.columns[column].deciles[d] = int(self.columns[column].deciles[d] * (1-ratio))
+                    #print("Final:", self.columns[column].deciles)
+            
 
 
 class LemonadeColumn(object):
@@ -245,6 +283,13 @@ class LemonadeColumn(object):
         
         if not self.distinct_values:
             self.distinct_values = self.n_rows
+            
+        if self.type in ["DOUBLE", "DECIMAL", "DATE", "DATETIME"]:
+            self.min_value = float(self.min_value)
+            self.max_value = float(self.max_value)
+        elif self.type in ["INTEGER", "LONG"]:
+            self.min_value = int(self.min_value)
+            self.max_value = int(self.max_value)
     
         if self.deciles:
             #print(self.deciles)
@@ -252,12 +297,12 @@ class LemonadeColumn(object):
             self.deciles = json.loads(self.deciles)
             new_deciles = {}
 
-            if self.type in ["DOUBLE", "DECIMAL"]:
+            if self.type in ["DOUBLE", "DECIMAL", "DATE", "DATETIME"]:
                 for k,v in self.deciles.items():
                     new_deciles[float(k)] = v
             elif self.type in ["INTEGER", "LONG"]:
                 for k,v in self.deciles.items():
-                    new_deciles[int(k.split(".")[0])] = v
+                    new_deciles[int(k.split(".")[0])] = v                
             else:
                 for k,v in self.deciles.items():
                     new_deciles[k] = v
@@ -285,8 +330,8 @@ class LemonadeColumn(object):
             (self.LIMONERO_DATA_TYPES_TO_BYTES[self.type] * self.missing_total)
 
     def __repr__(self):
-        return "name: '{}', type: '{}', estimated_column_size_total: {}, n_rows: {}\n"\
-            .format(self.name, self.type, self.estimated_column_size_total, self.n_rows)
+        return "<name: '{}', type: '{}', estimated_column_size_total: {}, n_rows: {}, min_value: {}, max_value: {}, distinct_values: {}>"\
+           .format(self.name, self.type, self.estimated_column_size_total, self.n_rows, self.min_value, self.max_value, self.distinct_values)
     
     def is_number(self):
         return self.type in ["BINARY", "DOUBLE", "DECIMAL", "FLOAT", "LONG", "INTEGER"]
@@ -297,20 +342,89 @@ class LemonadeColumn(object):
     def is_date(self):
         return self.type == "DATE"
     
+    def is_datetime(self):
+        return self.type == "DATETIME"
+    
     def remove_n_rows(self, rows_to_remove):
+        """
+        Consideramos uma distribuição uniforme.
+        
+        Alteramos: n de linhas total, o número de registros ausentes, e o numero de valores distintos.
+        """
+        if rows_to_remove >= self.n_rows:
+            rows_to_remove = self.n_rows
+        
+        if rows_to_remove > 0:
+            target_rows = self.n_rows - rows_to_remove
+
+
+            removed_by_missing = 0
+            removed_by_distinct = 0  
+            #print("[DEBUG] - remove_n_rows({})) from {} rows".format(rows_to_remove, self.n_rows))
+
+            if self.missing_total > 0:
+                old_missing = self.missing_total
+                new_missing = int((target_rows * self.missing_total)/self.n_rows)
+
+                if self.missing_total < new_missing:
+                    self.missing_total = 0
+                else:
+                    self.missing_total = new_missing  
+                
+                removed_by_missing = old_missing - self.missing_total
+                self.n_rows -= removed_by_missing
+                #print("[DEBUG] - missing - old: {} - new: {} - removed: {}".format(old_missing, self.missing_total, removed_by_missing))
+
+            others_to_remove = rows_to_remove - removed_by_missing
+            self.n_rows -= others_to_remove
+            #print("[DEBUG] - remove_n_rows() - other_rows - new {} rows - removed: {}".format(self.n_rows, others_to_remove))
+
+            if self.n_rows > 0:
+                old_distinct = self.distinct_values
+#                 new_distinct = int((target_rows * self.distinct_values)/self.n_rows)
+
+#                 if self.distinct_values < new_distinct:
+#                     self.distinct_values = 1
+#                 else:
+#                     self.distinct_values = new_distinct 
+
+                if self.n_rows < self.distinct_values:
+                    self.distinct_values = self.n_rows
+        
+                removed_by_distinct = old_distinct - self.distinct_values
+            else:
+                self.distinct_values = 0
+            
+            #print("[DEBUG] - remove_n_rows() distinct_values - old: {} - new: {} - removed: {}".format(old_distinct, self.distinct_values, removed_by_distinct))
+
+        
+
+        
+        
+            
+    def update_rows(self, new_rows):
         """
         Consideramos uma distribuição uniforme
         """
-        ratio = self.missing_total // max([self.n_rows, 0.0001])
-        n = int(rows_to_remove * ratio)
+        missing_ratio = self.missing_total / max([self.n_rows, 0.0001])
+        missing_n = int(new_rows * missing_ratio)
         
-        if self.missing_total < n:
-            n = self.missing_total
-            self.missing_total = 0
-        else:
-            self.missing_total -= n
+        distinct_ratio = self.distinct_values / self.n_rows
+        #print(f"update_rows : distinct_ratio {distinct_ratio}") 
+        distinct_n = max([int(new_rows * distinct_ratio), 1])
+        #print(f"update_rows : distinct_n {distinct_n}")   
         
-        self.n_rows -= rows_to_remove
+        if self.deciles:
+            to_remove = sum(self.deciles.values()) - new_rows
+            if to_remove > 0:
+                n_keys = len(self.deciles)
+                r = math.ceil(to_remove / n_keys)
+                for d in self.deciles:
+                    self.deciles[d] -= r
+        
+        self.missing_total = missing_n  
+        self.distinct_values = distinct_n
+        self.n_rows = new_rows
         
 
     def get_bin_to_value(self, v1, mode="equals"):
@@ -343,10 +457,12 @@ class LemonadeColumn(object):
         
         elif self.deciles:
             tmp = {}
+            
             # filtrando elementos menores que o máximo
             for k in sorted(list(self.deciles.keys()), reverse=True):
                 if k < overlap_interval[1]:
                     tmp[k] = self.deciles[k]
+                    
             idx = 0
             for i, k in enumerate(sorted(list(tmp.keys()))):
                 if k > overlap_interval[0]:
@@ -356,11 +472,15 @@ class LemonadeColumn(object):
             for i, k in enumerate(sorted(list(tmp.keys()))):
                 if i < idx:
                     del tmp[k]
-
+            
             value = sum([tmp[k] for k in tmp])
+            
             return value
         else:
             return self.n_rows
+    
+
+                
 
             
                 
@@ -408,10 +528,13 @@ class LimoneroCalibration(object):
     def update_limonero(self, sqls):
         connection = get_sql_connection(LIMONERO_DB)
         for sql in sqls:
-            with connection.cursor() as cursor:
-                cursor.execute(sql)
-                cursor.fetchall()
-            connection.commit()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(sql)
+                    cursor.fetchall()
+                connection.commit()
+            except:
+                print(sql)
         connection.close()
 
     def calibrate(self, datasource_id=None):
@@ -441,6 +564,14 @@ class LimoneroCalibration(object):
 
         datasources = [i for i in range(self.current_datasource_id, self.last_datasource_id)]
         stats = {}
+        
+        emoji_pattern = re.compile("["
+            u"\U0001F600-\U0001F64F"  # emoticons
+            u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+            u"\U0001F680-\U0001F6FF"  # transport & map symbols
+            u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                               "]+", flags=re.UNICODE)
+        
         for datasource_id in datasources:
             print(f"Checking datasource {datasource_id} ...")
             if not self.check_datasource_id(datasource_id):
@@ -480,8 +611,7 @@ class LimoneroCalibration(object):
                 summary = df.summary().toPandas().set_index("summary").T.to_dict(orient='index')
                 dtypes = {k: v for k, v in df.dtypes}
 
-                #for c in df.columns:
-                for c in ["shipdate", 'commitdate', 'receiptdate']:
+                for c in df.columns:
                     col_type = dtypes[c]
                     
                     missing_total = 0
@@ -528,9 +658,16 @@ class LimoneroCalibration(object):
                         deciles = gen_deciles_numeric(c, df, min_value, max_value)
                     
                     elif col_type in ["string"]:
+                                                
                         deciles = gen_deciles_string(c, df, min_value, max_value)
                         
-                    elif col_type in ['date']:
+                        min_value = emoji_pattern.sub(r'', min_value)
+                        max_value = emoji_pattern.sub(r'', max_value)
+                        deciles = emoji_pattern.sub(r'', deciles)
+                        
+                        
+                        
+                    elif col_type in ['date', 'datetime']:
                         column_tmp = c + "_tmp"
                         df = df.withColumn(column_tmp, F.unix_timestamp(c))
                         min_value = min_value.strftime('%s')
@@ -538,8 +675,8 @@ class LimoneroCalibration(object):
                         deciles = gen_deciles_numeric(column_tmp, df, min_value, max_value)
                         
                     elif col_type in ["datetime"]:
-                        raise Exception("DateTime not supported yet")
-
+                        raise Exception("DateTime not supported yet")                       
+                        
                     stats[datasource_id]['attribute'][c] = {'distinct_values': distinct_values[c],
                                                             'missing_total': missing_total,
                                                             'mean': mean,

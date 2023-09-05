@@ -61,6 +61,9 @@ class ClusteringModelOperation(Operation):
             code = """
         X = get_X_train_data({input}, {features})
         clustering_model = {algorithm}.fit(X)
+        
+        emit_event(name='update task', message=_('Model fitted.'),
+               identifier=task_id, status='RUNNING')
 
         if hasattr(clustering_model, 'predict'):
             y = clustering_model.predict(X)
@@ -420,8 +423,8 @@ class KMeansClusteringOperation(Operation):
 
         if self.has_code:
             self.n_init = int(parameters.get(self.N_INIT_PARAM, 10) or 10)
-            self.n_jobs = parameters.get(self.N_JOBS_PARAM, None) or None
-            self.algorithm = parameters.get(self.ALGORITHM_PARAM, 'auto') or 'auto'
+            #self.n_jobs = parameters.get(self.N_JOBS_PARAM, None) or None
+            self.algorithm = parameters.get(self.ALGORITHM_PARAM, 'elkan') or 'elkan'
             self.n_init_mb = int(parameters.get(self.N_INIT_MB_PARAM, 3) or 3)
             self.tol = float(parameters.get(self.TOL_PARAM, 0.0) or 0.0)
             self.max_no_improvement = int(parameters.get(
@@ -466,16 +469,16 @@ class KMeansClusteringOperation(Operation):
         else:
             self.seed = None
 
-        if self.n_jobs is not None and self.n_jobs != '0':
-            self.n_jobs = int(self.n_jobs)
-        else:
-            self.n_jobs = None
+        #if self.n_jobs is not None and self.n_jobs != '0':
+        #    self.n_jobs = int(self.n_jobs)
+        #else:
+        #    self.n_jobs = None
 
     @staticmethod
     def get_output_metrics_code():
         code = """
-        ['{silhouette_euclidean}', silhouette_score(X, y, metric='euclidean')],
-        ['{silhouette_cosine}', silhouette_score(X, y, metric='cosine')],
+        #['{silhouette_euclidean}', silhouette_score(X, y, metric='euclidean')],
+        #['{silhouette_cosine}', silhouette_score(X, y, metric='cosine')],
         ['{cluster_centers}', clustering_model.cluster_centers_],
         ['{inertia}', clustering_model.inertia_]
         """.format(inertia=gettext('Inertia'),
@@ -492,12 +495,12 @@ class KMeansClusteringOperation(Operation):
             code = """
             algorithm = KMeans(n_clusters={k}, init='{init}', 
                                max_iter={max_iter}, tol={tol}, 
-                               random_state={seed}, n_init={n_init}, 
-                               n_jobs={n_jobs}, algorithm='{algorithm}')
+                               random_state={seed}, n_init='auto', 
+                               algorithm='{algorithm}')
             """.format(k=self.n_clusters, max_iter=self.max_iter,
                        tol=self.tolerance, init=self.init_mode,
                        seed=self.seed, n_init=self.n_init,
-                       n_jobs=self.n_jobs, algorithm=self.algorithm)
+                       algorithm=self.algorithm)
         else:
             code = """
             algorithm = MiniBatchKMeans(n_clusters={k}, init='{init}', 

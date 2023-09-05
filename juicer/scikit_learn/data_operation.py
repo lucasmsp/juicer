@@ -275,7 +275,7 @@ class DataReaderOperation(Operation):
         {{output}} = pd.read_parquet(f, engine='pyarrow')
         f.close()
         {%- elif format == 'JSON' %}
-        {{output}} = pd.read_json(f, orient='records')
+        {{output}} = pd.read_json(f, lines=True)
         f.close()
         {%- elif format == 'JDBC' %}
         {{jdbc_code}}

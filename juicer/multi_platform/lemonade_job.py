@@ -252,7 +252,7 @@ class LemonadeJob(object):
                         out_degree_required=result['N_OUTPUT'],
                         out_degree_multiplicity_required=result['M_OUTPUT'],
                         port_names=port_names,
-                        parents=[],
+                        parents={},
                         attr_dict=task)
                 else:
                     self.disabled_tasks[task['id']] = task
@@ -283,8 +283,8 @@ class LemonadeJob(object):
 
                     self.graph.add_edge(flow['source_id'], flow['target_id'],
                                         attr_dict=flow)
-                    self.graph.nodes[flow['target_id']]['parents'].append(
-                        flow['source_id'])
+
+                    self.graph.nodes[flow['target_id']]['parents'][flow['target_port_name']] = flow['source_id']
                 else:
                     print(
                         _("Incorrect configuration for ports: %s, %s"),
@@ -629,10 +629,10 @@ class LemonadeJob(object):
                 self.jobs.pop(j, None)
                 
                 
-    def get_dataflow(self, v="v5"):
+    def get_dataflow(self, v="v5", base_calibration=True):
 
         if v == "v5":
-            return self._gen_dataflow_v5()
+            return self._gen_dataflow_v5(base_calibration)
 
     def find_jobs_order(self):
         tasks = re.findall("task_futures\[\'.*\] = ", self.stand.get('source_code', ""))
@@ -649,14 +649,7 @@ class LemonadeJob(object):
             orders = sorted(list(self.jobs.keys()))
         return orders
 
-    def calculate_outcome_v4(self, input_size, operations_dict):
-        base_value = 1.0
-        factors = operations_dict.get("data_amplification", [])
-        for f in factors:
-            base_value += f
-        return input_size * base_value
-
-    def _gen_dataflow_v5(self):
+    def _gen_dataflow_v5(self, base_calibration=True):
 
         task_orders = self.find_jobs_order()
 
@@ -666,8 +659,9 @@ class LemonadeJob(object):
         scenario_idx = 5
         log_idx = 7
         
-
+        
         dataflow = [0 for _ in range(len(self.jobs))]
+
         if self.cluster:
             cluster_id = self.cluster.cluster_id
         else:
@@ -723,9 +717,11 @@ class LemonadeJob(object):
                         self.graph.nodes[task_id]["model"] = new_dfs
                     else:
                         dfs = []
+
                         try:
-                            for parent_task_id in task["parents"]:
-                                dfs.append(self.df_states[parent_task_id][0])
+                            for input_data_order in sorted(task["parents"].keys()):
+                                task_p = task["parents"][input_data_order]
+                                dfs.append(self.df_states[task_p][0])
                         except Exception as e:
                             print("ERROR")
                             print("task_id", task_id)

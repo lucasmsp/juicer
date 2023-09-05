@@ -36,8 +36,11 @@ class Cluster(object):
         self.description = None
         self.general_parameters = None
         self.name = None
+        self.spill_disk_threshold = None
         self.cluster_id = cluster_id
+        self.total_memory = None
         self.get_cluster_conf(cluster_id)
+        
 
     def get_cluster_conf(self, cluster_id):
         connection = get_sql_connection(STAND_DB)
@@ -56,12 +59,23 @@ class Cluster(object):
         self.address = result['address']
         self.executor_cores = int(result['executor_cores'])
         self.executor_memory = result['executor_memory'].upper()
+        
         if "GB" in self.executor_memory:
             self.executor_memory = float(self.executor_memory.replace("GB", ""))
         elif "G" in self.executor_memory:
             self.executor_memory = float(self.executor_memory.replace("G", ""))
         else:
             raise
+        
+        if cluster_id == 7:
+            self.total_memory = 11  * 1024**3
+            self.spill_disk_threshold =  (0.6 * (self.total_memory - 300*1024*1024)) 
+            
+        elif cluster_id == 8:
+            self.total_memory = self.executor_cores * 10  * 1024**3
+            self.spill_disk_threshold =  (0.6 * (self.total_memory - self.executor_cores*300*1024*1024)) 
+            
+        
         self.executors = int(result['executors'])
         self.general_parameters = result.get('general_parameters', "")
         if self.general_parameters:

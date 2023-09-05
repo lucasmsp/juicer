@@ -15,7 +15,7 @@ from juicer.multi_platform.limonero_api import Dataset
 from juicer.multi_platform.operations import AddRowsOperationModel, AggregationOperationModel, \
     AddColumnsOperationModel, SortOperationModel, ProjectionOperationModel, ReplaceValueOperationModel,\
     CleanMissingOperationModel, SVMClassificationOperationModel, TransformationOperationModel,\
-    FilterSelectionOperationModel, JoinOperationModel
+    FilterSelectionOperationModel, JoinOperationModel, RemoveDuplicatedRowsOperationModel
 
 df1 = Dataset(3391).stats
 
@@ -159,3 +159,11 @@ def _test_join():
 
 
 
+def _test_remove_duplicates():
+    print("# _test_remove_duplicates")
+    op1 = RemoveDuplicatedRowsOperationModel({"operation_id": 1, "attributes": ["pclass", "age"]})
+    out = op1.estimate_output([df1])
+    print(df1)
+    print(out[0])
+    print(out[0].columns)
+    print(op1.gen_model())

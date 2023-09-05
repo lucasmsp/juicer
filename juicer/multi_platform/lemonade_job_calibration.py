@@ -20,7 +20,7 @@ import itertools
 import pandas as pd
 import datetime
 from gettext import gettext
-
+import copy
 #LIBRARY_PATH = os.path.expanduser("/home/lucasmsp/workspace/bigsea/docker-lemonade/juicer/")
 #sys.path.insert(0, LIBRARY_PATH)
 #os.environ["PYTHONPATH"] = os.environ.get("PYTHONPATH", "") + ":" + LIBRARY_PATH
@@ -68,10 +68,11 @@ class HistoricalLemonadeJob(LemonadeJob):
         self.created_timestamp = stand["created"]
         self.scheduled_timestamp = stand["started"]
         self.finished_timestamp = stand["finished"]
-        self.started_timestamp = min([j["l_date"] for j in self.job_log]) # primeiro timestamp de uma operação
+        self.first_timestamp = min([j["MIN"] for j in self.job_log]) # primeiro timestamp de uma operação
+        self.last_timestamp = max([j["MAX"] for j in self.job_log]) # primeiro timestamp de uma operação
         
-        self.seconds_to_start = (self.started_timestamp - self.scheduled_timestamp).total_seconds()
-        self.real_time = (self.finished_timestamp - self.started_timestamp).total_seconds()
+        self.seconds_to_start = (self.first_timestamp - self.scheduled_timestamp).total_seconds()
+        self.execution_time = (self.last_timestamp - self.first_timestamp).total_seconds()
 
         self.original_transpiler = self.get_transpiler(self.platform)  # TODO
         self._inflate_jobs_info()
@@ -84,7 +85,7 @@ class HistoricalLemonadeJob(LemonadeJob):
         Started Timestamp: {}
         Finished Timestamp: {}
         """.format(self.job_id, self.workflow["id"], self.platform, self.cluster.cluster_id,
-                   self.created_timestamp, self.scheduled_timestamp, self.started_timestamp,
+                   self.created_timestamp, self.scheduled_timestamp, self.first_timestamp,
                    self.finished_timestamp))
 
     def get_transpiler(self, platform_id):
@@ -125,26 +126,29 @@ class HistoricalLemonadeJob(LemonadeJob):
                         jobs_inflated.append(job_id)
 
     def _get_duration_task(self, task_id):
-        s1 = None
-        s2 = None
+        # s1 = None
+        # s2 = None
 
+        duration = 0.01
+        #print(self.job_log)
         for task2 in self.job_log:
             if task_id == task2["task_id"]:
-                if (task2["l_status"] == "RUNNING") and ("converted" not in task2['message']):
-                    if s1:
-                        s1 = min([s1, task2['l_date']])
-                    else:
-                        s1 = task2['l_date']
+                duration = max([task2['seconds'], 0.01])
+#                 if (task2["l_status"] == "RUNNING") and ("converted" not in task2['message']):
+#                     if s1:
+#                         s1 = min([s1, task2['l_date']])
+#                     else:
+#                         s1 = task2['l_date']
 
-                elif task2["l_status"] == "COMPLETED":
-                    if s2:
-                        s2 = max([s2, task2['l_date']])
-                    else:
-                        s2 = task2['l_date']
-        try:
-            duration = (s2 - s1).total_seconds()
-        except Exception as e:
-            duration = -1
+#                 elif task2["l_status"] == "COMPLETED":
+#                     if s2:
+#                         s2 = max([s2, task2['l_date']])
+#                     else:
+#                         s2 = task2['l_date']
+#         try:
+#             duration = (s2 - s1).total_seconds()
+#         except Exception as e:
+#             duration = -1
 
         return duration
 
@@ -215,7 +219,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                 duration = 0.01
             self.jobs[job_id]["total_seconds"] = duration
 
-    def _gen_dataflow_v5(self):
+    def _gen_dataflow_v5(self, base_calibration=True):
         """
         
         Ideia: `total_seconds` - (tarefas nao interessantes)
@@ -229,20 +233,26 @@ class HistoricalLemonadeJob(LemonadeJob):
         operations_idx = 6
         log_idx = 7
 
-        if "dc_w" not in self.workflow["name"]:
+        is_not_calibration = "dc_w" not in self.workflow["name"]
+        if is_not_calibration and base_calibration:
             return 
+        
+        
+        if base_calibration:
+            scenario = self.workflow["name"].split("_")[1][1:]
 
-        scenario = self.workflow["name"].split("_")[1][1:]
-
-        # TODO: 
-        if "cleaning-mode" in scenario:
-            scenario = "clean-missing"
-        elif "svm" in scenario:
-            scenario = "svm-classification-model"
-        elif "filter" in scenario:
-            scenario = "filter-selection"
+            # TODO: 
+            if "cleaning-mode" in scenario:
+                scenario = "clean-missing"
+            elif "svm" in scenario:
+                scenario = "svm-classification-model"
+            elif "filter" in scenario:
+                scenario = "filter-selection"
+        else:
+            scenario = self.workflow["name"]
         
         dataflow = [0 for _ in range(len(self.jobs))]
+
         if self.cluster:
             cluster_id = self.cluster.cluster_id
         else:
@@ -277,22 +287,28 @@ class HistoricalLemonadeJob(LemonadeJob):
                     self.jobs[job_id]["action"] = self.graph.nodes[t]['task_id']
 
             tasks_to_remove = set()
+            last_slug = None
             for task_id in sorted_tasks:
                 task = self.graph.nodes[task_id]
+                
                 slug = task.get("operation", {"slug": None})["slug"]
-
                 dataflow[order_job][task_idx] = task_id
-
+                
                 if slug:
+                    if not base_calibration:
+                        scenario = slug
+                        dataflow[order_job][5] = scenario
+                        
                     db = None
                     try:
-                        operation = task["object"]
+                        operation = copy.deepcopy(task["object"])
                     except e:
                         raise Exception(self.ERROR_SLUG_NOT_FOUND)
                         
                     # Seleção das tarefas de interesse: Tudo que estiver em
                     # tasks_to_remove, será removido do tempo de execução do job
-                    if scenario in slug:
+                     
+                    if (scenario in slug) or not base_calibration:
                         dataflow[order_job][operations_idx][slug] = operation
                         
                     elif (scenario == 'data-migration') and (slug == 'data-writer'):
@@ -300,7 +316,8 @@ class HistoricalLemonadeJob(LemonadeJob):
                         new_op = self.operation_api.all_operations[scenario](p)
                         dataflow[order_job][operations_idx][scenario] = new_op
                         tasks_to_remove.add(task_id)
-                        dataflow[order_job][time_idx] = self.real_time
+
+                        dataflow[order_job][time_idx] = self.execution_time
                         
                     elif slug != 'data-writer':
                         #print(f"Removing {task_id} -> {slug}")
@@ -315,16 +332,21 @@ class HistoricalLemonadeJob(LemonadeJob):
                         if db_size < 0:
                             raise Exception(self.ERROR_UNKNOWN_SIZE.format(db.name, db.base_id))
 
-                        new_dfs = operation.estimate_output([db.stats])
+                        new_dfs = copy.deepcopy(operation.estimate_output([db.stats]))
                         self.df_states[task_id] = new_dfs
                         self.graph.nodes[task_id]["model"] = new_dfs
                     else:
                         dfs = []
-                        for p in task["parents"]:
-                            dfs.append(self.df_states[p][0])
+
+                        for input_data_order in sorted(task["parents"].keys()):
+                            task_p = task["parents"][input_data_order]
+                            dfs.append(self.df_states[task_p][0])
+                                
+                        # for p in task["parents"]:
+                        #     dfs.append(self.df_states[p][0])
 
                         # TODO: suporte ao split
-                        new_dfs = operation.estimate_output(dfs)
+                        new_dfs = copy.deepcopy(operation.estimate_output(dfs))
                         self.graph.nodes[task_id]["model"] = new_dfs
                         self.df_states[task_id] = new_dfs
                         

@@ -99,9 +99,10 @@ def get_job_log(connection, job_id):
     with connection.cursor() as cursor:
         sql = f"""
         SELECT L.date AS l_date, L.status AS l_status, S.operation_id, S.status AS s_status, S.date, S.task_id, 
-        L.message, L.level
+        L.message, L.level, j.workflow_id
         FROM {STAND_DB}.job_step_log L 
         INNER JOIN {STAND_DB}.job_step S ON S.id = L.step_id
+        INNER JOIN {STAND_DB}.job j ON j.id = S.job_id
         WHERE S.job_id = {job_id}
         """
         cursor.execute(sql)

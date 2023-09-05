@@ -292,7 +292,8 @@ class DataReaderOperation(Operation):
         
         # TODO: Lucas
         #code.append('{}.cache()'.format(self.output))
-        code.append('n_rows = {}.count()'.format(self.output))
+        # n_partitions = int(spark_session.conf.get("spark.sql.files.minPartitionNum"))\n{out} = {out}.repartition(n_partitions)\nprint("Partitions: ",{out}.rdd.getNumPartitions())
+        code.append('n_rows = {out}.count()\n'.format(out=self.output))
         code.append("emit_event(name='update task', message=_('Records: {}'.format(n_rows)), "
                     "identifier=task_id, status='RUNNING')")
         return '\n'.join(code)

@@ -757,6 +757,15 @@ class JoinOperation(Operation):
             
             keys1 = ['{suf_l}' + c for c in {keys1}]
             keys2 = ['{suf_r}' + c  for c in {keys2}]
+            
+            for c in cols1:
+                if isinstance({in1}[c].dtype, pd.Int64Dtype):
+                    {in1}[c] = {in1}[c].astype(float)
+            
+            for c in cols2:
+                if isinstance({in2}[c].dtype, pd.Int64Dtype):
+                    {in2}[c] = {in2}[c].astype(float)
+                    
             """.format(in1=self.named_inputs['input data 1'],
                        in2=self.named_inputs['input data 2'],
                        suf_l=self.suffixes[0], suf_r=self.suffixes[1],
@@ -774,7 +783,7 @@ class JoinOperation(Operation):
             data2_tmp.columns = [c + "_lower" for c in data2_tmp.columns]
             col2 = list(data2_tmp.columns)
             data2_tmp = pd.concat([{in2}, data2_tmp], axis=1, sort=False)
-    
+                    
             {out} = pd.merge(data1_tmp, data2_tmp, left_on=col1, right_on=col2,
                 copy=False, suffixes={suffixes}, how='{type}')
             # Why drop col_lower?
@@ -787,6 +796,7 @@ class JoinOperation(Operation):
                             suffixes=self.suffixes)
             else:
                 code += """
+                    
             {out} = pd.merge({in1}, {in2}, how='{type}', 
                     suffixes={suffixes},
                     left_on=keys1, right_on=keys2)

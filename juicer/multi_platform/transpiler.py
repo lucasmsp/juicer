@@ -182,7 +182,6 @@ class MultiPlatformTranspiler(Transpiler):
             parameters['my_ports'] = port.get('my_ports', [])
 
             parameters = multi_converter.operations[slug_operation](parameters).convert(platform_target)
-
             instance = class_name(parameters, port.get('named_inputs', {}),
                                   port.get('named_outputs', {}))
 
