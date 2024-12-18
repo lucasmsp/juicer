@@ -39,16 +39,10 @@ from pyspark.ml.feature import QuantileDiscretizer
 
 from juicer.multi_platform.auxiliar_services import LIMONERO_DB
 
-#HOST = "localhost"
-HOST = "150.164.203.17"
-LIMONERO_PORT = 43402
-# CONFIG_FILE = "/home/lucasmsp/workspace/bigsea/docker-lemonade/config/juicer-config-local.yaml"
-CONFIG_FILE =  "/mnt/lucasmsp/juicer/juicer-config-local.yaml"
-
 
 class Dataset(object):
 
-    def __init__(self, base_id):
+    def __init__(self, base_id, config):
         self.disk_size = 0.00
         self.storage_name = None
         self.format = None
@@ -58,6 +52,10 @@ class Dataset(object):
         self.name = None
         self.base_id = base_id
         self.stats = None
+
+        self.config = config
+        self.limonero_host = self.config['thesis']['limonero_host']
+        self.limonero_port = self.config['thesis']['limonero_port']
         self.get_base_stats()
 
     def __repr__(self):
@@ -78,7 +76,7 @@ class Dataset(object):
         # connection.commit()
         # connection.close()
 
-        result = self.query_limonero(f"http://{HOST}:{LIMONERO_PORT}", 'datasources', '123456', self.base_id)
+        result = self.query_limonero(f"http://{self.limonero_host}:{self.limonero_port}", 'datasources', '123456', self.base_id)
         if result:
             self.name = result['name']
             self.url = result['url']
@@ -488,11 +486,17 @@ class LemonadeColumn(object):
 
 class LimoneroCalibration(object):
 
-    def __init__(self):
+    def __init__(self, config):
 
         self.last_datasource_id = None
         self.current_datasource_id = 1
         self.load_id()
+
+        self.config = config
+        self.mysql_host = self.config['thesis']['mysql_host']
+        self.mysql_port = self.config['thesis']['mysql_port']
+        self.limonero_host = self.config['thesis']['limonero_host']
+        self.limonero_port = self.config['thesis']['limonero_port']
 
     def save_id(self, datasource_id):
         with open("/tmp/limonero_info.txt", "w") as f:
@@ -504,7 +508,7 @@ class LimoneroCalibration(object):
                 self.current_datasource_id = float(f.read())
 
     def get_last_datasource_id(self):
-        connection = get_sql_connection(LIMONERO_DB)
+        connection = get_sql_connection(self.mysql_host, self.mysql_port, LIMONERO_DB)
         with connection.cursor() as cursor:
             sql = f"SELECT MAX(id) as id from {LIMONERO_DB}.data_source"
             cursor.execute(sql)
@@ -515,7 +519,7 @@ class LimoneroCalibration(object):
         return result
 
     def check_datasource_id(self, data_source_id):
-        connection = get_sql_connection(LIMONERO_DB)
+        connection = get_sql_connection(self.mysql_host, self.mysql_port, LIMONERO_DB)
         with connection.cursor() as cursor:
             sql = f"SELECT id as id from {LIMONERO_DB}.data_source WHERE id = {data_source_id}"
             cursor.execute(sql)
@@ -526,7 +530,7 @@ class LimoneroCalibration(object):
         return has_id
 
     def update_limonero(self, sqls):
-        connection = get_sql_connection(LIMONERO_DB)
+        connection = get_sql_connection(self.mysql_host, self.mysql_port, LIMONERO_DB)
         for sql in sqls:
             try:
                 with connection.cursor() as cursor:
@@ -551,11 +555,9 @@ class LimoneroCalibration(object):
             print("Limonero info is already calibrated ...")
             return
 
-        juicer_config = yaml.load(
-            open(CONFIG_FILE).read(),
-            Loader=yaml.FullLoader)
 
-        app_configs = juicer_config['juicer']['spark']
+
+        app_configs = self.config['juicer']['spark']
 
         spark_builder = SparkSession.builder.appName('Helper')
         for option, value in app_configs.items():
@@ -586,7 +588,7 @@ class LimoneroCalibration(object):
                         'juicer': {
                             'services': {
                                 'limonero': {
-                                    'url': f'http://{HOST}:{LIMONERO_PORT}',
+                                    'url': f'http://{self.limonero_host}:{self.limonero_port}',
                                     'auth_token': '123456'
                                 }
                             }
@@ -757,6 +759,12 @@ def gen_deciles_string(column, df, min_value, max_value):
 
         
 if __name__ == "__main__":
-    ds = LimoneroCalibration()
+
+    config = sys.argv[1]
+    print("Limonero API: ",config)
+    with open(config) as config_file:
+        juicer_config = yaml.load(config_file.read(), Loader=yaml.FullLoader)
+
+    ds = LimoneroCalibration(config)
     ds.calibrate()
 

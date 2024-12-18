@@ -327,7 +327,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                     # Operacional: avalia a movimentação dos dados entre as tarefas
                     if slug == "data-reader":
                         base_id = int(task["parameters"]['data_source'])
-                        db = Dataset(base_id)
+                        db = Dataset(base_id, self.config)
                         db_size = db.disk_size
                         if db_size < 0:
                             raise Exception(self.ERROR_UNKNOWN_SIZE.format(db.name, db.base_id))

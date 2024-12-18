@@ -4,7 +4,6 @@ from juicer.multi_platform.limonero_api import BaseStatistics
 import copy
 import json
 from bisect import bisect
-import numpy as np
 import datetime
 
 
@@ -21,28 +20,29 @@ class OperationModeling(object):
             "add-columns": AddColumnsOperationModel,  # OK
             "add-rows": AddRowsOperationModel,  # OK
             "aggregation": AggregationOperationModel,  # ok
-            "difference": DifferenceOperationModel,
-            "set-intersection": SetIntersectionOperationModel,
+            "difference": DifferenceOperationModel, # TODO
+            "set-intersection": SetIntersectionOperationModel, # TODO
             "projection": ProjectionOperationModel,  # ok
             "drop": NonSupportedOperation,
             "remove-duplicated-rows": RemoveDuplicatedRowsOperationModel,  # ok
             "distinct": RemoveDuplicatedRowsOperationModel,  # ok
-            "replace-value": ReplaceValueOperationModel,
+            "replace-value": ReplaceValueOperationModel, # ok
             "sort": SortOperationModel,  # ok
-            "clean-missing": CleanMissingOperationModel,
+            "clean-missing": CleanMissingOperationModel, # ok
             "data-reader": DataReaderOperationModel,  # ok
             "data-writer": DataWriterOperationModel,  # ok
             "data-migration": DataMigrationOperationModel,
             "filter": FilterSelectionOperationModel,  # ok
             "filter-selection": FilterSelectionOperationModel,  # ok
             "transformation": TransformationOperationModel,  # ok
-            "join": JoinOperationModel,
-            "remove-stop-words": RemoveStopWordsOperationModel,
-            "sample": SampleOperationModel,
+            "join": JoinOperationModel, # ok
+            "remove-stop-words": RemoveStopWordsOperationModel, 
+            "sample": SampleOperationModel, # ok
             "split": SplitOperationModel,  # ok
-            "area-chart": VisualizationOperationModel,
+            "cast": ChangeAttributeOperationModel,
             
             # visualization
+            "area-chart": VisualizationOperationModel,
             "bar-chart": VisualizationOperationModel,
             "box-plot": VisualizationOperationModel,
             "bubble-chart": VisualizationOperationModel,
@@ -90,8 +90,9 @@ class OperationModeling(object):
             "lda-clustering-model": LDAClusteringOperationModel,
             "linear-regression-model": LinearRegressionOperationModel,
             'linear-regression': LinearRegressionOperationModel,
+            'logistic-regression': LogisticRegressionOperationModel,
             'logistic-regression-model': LogisticRegressionOperationModel,
-            "logistic-regression-classifier-model": LogisticRegressionOperationModel,
+            #"logistic-regression-classifier-model": LogisticRegressionOperationModel,
             'max-abs-scaler': MaxAbsOperationModel,
             'min-max-scaler': MinMaxOperationModel,
             "mlp-regressor-model": MLPRegressorOperationModel,
@@ -109,7 +110,7 @@ class OperationModeling(object):
             'standard-scaler': StandardScalerOperationModel,
             "stdbscan": STDBSCANOperationModel,
             "split-k-fold": SplitKFoldOperationModel,
-            "svm-classification-model": SVMClassificationOperationModel,
+            "svm-classification-model": SVMClassificationOperationModel,  # ok
             "word-to-vector": WordToVectorOperationModel,
             
             # removed
@@ -174,10 +175,8 @@ class OperationModel(object):
     debug = False
     
     def __init__(self, parameters):
-        self.spark = None
-        self.pandas = None
         self.features = None
-        self.data_amplification = 1.01
+        
         self.behavior = None
         self.parameters = parameters
         self.platform_base = 1 if self.parameters["operation_id"] < 1000 else 4
@@ -185,26 +184,6 @@ class OperationModel(object):
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        pass
-
-    def merge_features_info(self, _, __):
-        merged = {}
-        return merged
-
-    def merge_features(self, info1, info2):
-        merged = {}
-        if "freq" in info1:
-            merged["freq"] = info1["freq"] + info2["freq"]
-
-        if "data_amplification" in info1:
-            merged["data_amplification"] = info1["data_amplification"] + info2["data_amplification"]
-
-        m2 = self.merge_features_info(info1, info2)
-        for k in m2:
-            merged[k] = m2[k]
-        return merged
 
     def get_cleaned_slug(self):
         return self.__name__
@@ -227,31 +206,38 @@ class OperationModel(object):
         else:
             platform_id = "6"
         return platform_id
+
+    def convert(self, platform_id=None):
+        pass
+
+    def estimate_output(self, base_statistics):
+        pass
+        
+    def gen_model(self, platform_target=None):
+        return {}
+
+    def extract_field_value(self, parameters, field):
+        if "value" in parameters.get(field, {}):
+            parameters[field] = parameters[field]["value"]
+        return parameters
     
         
 
 class GenericOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = None
 
     def convert(self, platform_id=None):
         parameters = self.parameters.copy()
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
 
 class AddColumnsOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 1.0
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_EQ
         self.n_input = 1
         self.n_output = 1
@@ -310,7 +296,7 @@ class AddColumnsOperationModel(GenericOperationModel):
 class AddRowsOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 1.0
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
         self.n_input = 2
         self.n_output = 1
@@ -386,10 +372,8 @@ class AgglomerativeClusteringOperationModel(GenericOperationModel):
 class AggregationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features']
-        self.pandas = ['features']
-        self.features = {"freq": 0, "n_function": 0, "n_pivot": 0}
-        self.data_amplification = 0.9  # peso baseado na quantidade de colunas ?
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_REDUCE
         self.n_input = 1
         self.n_output = 1
@@ -404,21 +388,6 @@ class AggregationOperationModel(OperationModel):
             parameters["attributes"] = parameters["attributes"]["value"]
             parameters["function"] = parameters["function"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["n_function"] = len(self.parameters["function"])
-        self.features["data_amplification"] = [self.data_amplification]
-        if "pivot" in self.parameters:
-            self.features["n_pivot"] += 1
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "n_function": info1["n_function"] + info2["n_function"],
-            "n_pivot": info1["n_pivot"] + info2["n_pivot"]
-        }
-        return merged
 
     def estimate_output(self, base_statistics):
         parameters = self.convert()
@@ -508,41 +477,80 @@ class ApplyModelOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
+        self.col_label_trained = None
+
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+
+        parameters = self.extract_field_value(parameters, "features")
+        parameters = self.extract_field_value(parameters, "prediction")
+        
+        self.col_label_trained = parameters['task']['col_label_trained']['label']['value'][0]
+        return parameters
+    
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        parameters = self.convert()
+        self.label = parameters['prediction']
+        
+        if self.col_label_trained:
+                self.output.create_new_column(**{
+                "name": self.label,
+                "type": "DOUBLE",
+                "missing_total": 0,
+                'distinct_columns': self.col_label_trained.distinct_values,
+                'min_value': self.col_label_trained.min,
+                'max_value': self.col_label_trained.max
+            })
+        else:
+            self.output.create_new_column(**{
+                "name": self.label,
+                "type": "DOUBLE",
+                "missing_total": 0,
+                'distinct_columns': self.total_input_rows*0.10,
+                'min_value': 0,
+                'max_value': 1
+            })
+        self.output.recalculate()
+
+        return [self.output]
 
 
 class AssociationRulesOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0, "confidence": 0, "rules_count": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["rules_count"] = int(self.parameters.get("rules_count", 200))
-        self.features["confidence"] = float(self.parameters.get("confidence", 0.6))
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "confidence": min([info1["confidence"], info2["confidence"]]),
-            "rules_count": max([info1["rules_count"], info2["rules_count"]])
-        }
-        return merged
+class ChangeAttributeOperationModel(GenericOperationModel):
+    def __init__(self, parameters):
+        GenericOperationModel.__init__(self, parameters)
+        self.n_input = 1
+        self.n_output = 1
+        self.input = None
+        self.output = None
+        self.n_functions = 0
+
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+        if "value" in parameters.get("alias", {}):
+            parameters["alias"] = parameters["alias"]["value"]
+        return parameters
 
 
 class CleanMissingOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features']
-        self.pandas = ['features']
-        self.features = {"freq": 0, "simple": 0, "complex": 0}
-        self.data_amplification = 1.0
+        self.features = {}
+        
         self.n_input = 1
         self.n_output = 1
         self.input = None
@@ -555,25 +563,6 @@ class CleanMissingOperationModel(OperationModel):
         if "value" in parameters.get("attributes", {}):
             parameters["attributes"] = parameters["attributes"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-
-        if mode in ["VALUE", "REMOVE_ROW"]:
-            if mode == "REMOVE_ROW":
-                self.data_amplification = 0.9
-                self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_LESS
-            else:
-                self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
-            self.features["simple"] += 1
-
-        else:
-            self.features["complex"] += 1
-            self.behavior = self.PHYSICAL_BEHAVIOR_WIDE_INFO_EQ
-            if mode == "REMOVE_COLUMN":
-                self.data_amplification = 0.8
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -637,10 +626,8 @@ class CleanMissingOperationModel(OperationModel):
 class DataReaderOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['infer_schema', "format"]
-        self.pandas = ['infer_schema', "format"]
-        self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_READ
         self.n_input = 0
         self.n_output = 1
@@ -651,11 +638,6 @@ class DataReaderOperationModel(OperationModel):
         if "value" in parameters.get("alias", {}):
             parameters["alias"] = parameters["alias"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.output = copy.deepcopy(base_statistics[0])
@@ -676,9 +658,7 @@ class DataReaderOperationModel(OperationModel):
 class DataWriterOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0}
+        self.features = {}
         #elf.data_amplification = 1.0
         self.behavior = self.PHYSICAL_BEHAVIOR_WRITE
         self.n_input = 0
@@ -690,11 +670,6 @@ class DataWriterOperationModel(OperationModel):
         if "value" in parameters.get("alias", {}):
             parameters["alias"] = parameters["alias"]["value"]
         return parameters
-
-    # def extract_features(self):
-    #     self.features["freq"] += 1
-    #     self.features["data_amplification"] = [self.data_amplification]
-    #     return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -715,10 +690,8 @@ class DataWriterOperationModel(OperationModel):
 class DataMigrationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_WRITE
         self.n_input = 0
         self.n_output = 1
@@ -728,11 +701,6 @@ class DataMigrationOperationModel(OperationModel):
         parameters = self.parameters.copy()
         self.origin = parameters.get("origin_platform", -1)
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -761,24 +729,17 @@ class DBSCANClusteringOperationModel(GenericOperationModel):
 class DecisionTreeClassifierOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
 
 class DifferenceOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 0.9
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_REDUCE
 
 
@@ -797,83 +758,79 @@ class NonSupportedOperation(GenericOperationModel):
 class FeatureAssemblerOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features']
-        self.pandas = ['features']
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
 
     def convert(self, parameters):
+        print("FeatureAssemblerOperationModel:", parameters)
         if "value" in parameters.get("alias", {}):
             parameters["alias"] = parameters["alias"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        # self.features["freq"] = len(self.parameters["attributes"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-        }
-        return merged
 
 
 class FeatureDisassemblerOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['feature']
-        self.pandas = ['feature']
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
 
     def convert(self, parameters):
+        print("FeatureDisassemblerOperationModel:", parameters)
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-        }
-        return merged
 
 
 class FeatureIndexerOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, platform_id=None):
         parameters = self.parameters.copy()
         if "value" in parameters.get("attributes", {}):
             parameters["attributes"] = parameters["attributes"]["value"]
+
+        if "alias" in parameters.get("alias", {}):
+            parameters["alias"] = parameters["alias"]["value"]
         return parameters
 
-    def extract_features(self):
-        #  self.features["freq"] += 1
-        self.features["freq"] = len(self.parameters["attributes"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
 
-    def merge_features_info(self, info1, info2):
-        merged = {
+        parameters = self.convert()
+        print("FeatureIndexerOperationModel:", parameters)
+        self.features_col = parameters["attributes"]
+        # Por enquanto, rodar 1 coluna por vez
+        n_distinct_values = self.input.columns[self.features_col].distinct_values
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': n_distinct_values,
+            'min_value': 0,
+            'max_value': n_distinct_values
+        })
+        self.output.recalculate()
+
+        return [self.output]
+        
+    def gen_model(self, platform_target=None):
+
+        return {
+            "n_rows": self.input.n_rows,
+            "platform_id": self.platform_target
         }
-        return merged
 
 
 class FilterSelectionOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 0.9
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_LESS
         self.n_input = 0
         self.n_output = 1
@@ -887,17 +844,6 @@ class FilterSelectionOperationModel(OperationModel):
         if "value" in parameters.get("expression", {}):
             parameters["expression"] = parameters["expression"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["data_amplification"] = [self.data_amplification]
-        self.features["freq"] += 1
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-           # "n_expressions": min([info1["n_expressions"], info2["n_expressions"]])
-        }
-        return merged
     
     def parser_empression(self, parameters):
         
@@ -1081,9 +1027,7 @@ class FilterSelectionOperationModel(OperationModel):
 class FrequentItemSetOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attribute', "min_support", "min_confidence"]
-        self.pandas = ['attribute', "min_support", "min_confidence"]
-        self.features = {"freq": 0, "min_support": 0, "min_confidence": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
@@ -1093,104 +1037,36 @@ class FrequentItemSetOperationModel(OperationModel):
             parameters['attribute'] = parameters['attribute']['value']
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        if self.platform_base == 1:
-            self.features["min_support"] = float(self.parameters.get("min_support", 0.3))
-            self.features["min_confidence"] = float(self.parameters.get("min_confidence", 0.8))
-        else:
-            self.features["min_support"] = float(self.parameters["min_support"])
-            self.features["min_confidence"] = float(self.parameters["min_confidence"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "min_support": min([info1["min_support"], info2["min_support"]]),
-            "min_confidence": min([info1["min_confidence"], info2["min_confidence"]])
-        }
-        return merged
 
 
 class GaussianMixtureClusteringOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ["max_iterations", "tolerance"]
-        self.pandas = ["max_iter", "tol"]
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters["max_iterations"])
-        else:
-            self.features["max_iter"] = int(self.parameters["max_iter"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-             "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
 
 
 class GBTClassifierOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ["max_iter"]
-        self.pandas = ["n_estimators"]
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters.get("max_iter", 20))
-        else:
-            self.features["max_iter"] = int(self.parameters["n_estimators"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
 
 
 class GBTRegressorOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ["max_iter"]
-        self.pandas = ["n_estimators"]
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        if "n_estimators" in self.parameters:
-            self.features["max_iter"] = int(self.parameters["n_estimators"])
-        else:
-            self.features["max_iter"] = int(self.parameters.get("max_iter", 100))
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
 
 
 class GeneralizedLinearRegressor(GenericOperationModel):
@@ -1202,28 +1078,11 @@ class GeneralizedLinearRegressor(GenericOperationModel):
 class HuberRegressorOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters["max_iterations"])
-        else:
-            self.features["max_iter"] = int(self.parameters["max_iter"])
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": max([info1["max_iter"], info2["max_iter"]]),
-        }
-        return merged
 
 
 class IsotonicRegressionOperationModel(GenericOperationModel):
@@ -1242,10 +1101,8 @@ class JoinOperationModel(OperationModel):
 
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features']
-        self.pandas = ['features']
-        self.features = {"freq": 0}
-        self.data_amplification = 0.9
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_EQ
 
     def convert(self, platform_id=None):
@@ -1256,12 +1113,6 @@ class JoinOperationModel(OperationModel):
             parameters[self.LEFT_ATTRIBUTES_PARAM] = self.parameters[self.LEFT_ATTRIBUTES_PARAM]["value"]
             parameters[self.RIGHT_ATTRIBUTES_PARAM] = self.parameters[self.RIGHT_ATTRIBUTES_PARAM]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
     
     def estimate_output(self, base_statistics):
         self.input1 = copy.deepcopy(base_statistics[0])
@@ -1564,150 +1415,211 @@ class LDAClusteringOperationModel(GenericOperationModel):
 class LinearRegressionOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.pandas = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
-    def convert(self, parameters):
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+        #print('LogisticRegressionOperationModel: ', parameters)
+
+        parameters = self.extract_field_value(parameters, "features")
+        parameters = self.extract_field_value(parameters, "label")
+        parameters = self.extract_field_value(parameters, "prediction")
+        parameters = self.extract_field_value(parameters, "elastic_net")   
+        parameters = self.extract_field_value(parameters, "max_iter")  
+
+        if int(platform_id) == 4:
+            # to sklearn
+            if "elastic_net" in parameters:
+                parameters["alpha"] = parameters["elastic_net"]
         return parameters
+    
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
 
-    def extract_features(self):
-        self.features["freq"] += 1
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label']
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': self.input.columns[self.label].distinct_values,
+            'min_value': self.input.columns[self.label].min,
+            'max_value': self.input.columns[self.label].max
+        })
+        self.output.recalculate()
 
-        self.features["max_iter"] = int(self.parameters.get("max_iterations", 1000))  # TODO
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
+        return [self.output]
 
 
 class LogisticRegressionOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.pandas = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.features = {"freq": 0, "max_iter": 0}
-        # TODO: como saber de 1 coluna ja e uma feature.
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
-    def convert(self, parameters):
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+        #print('LogisticRegressionOperationModel: ', parameters)
+
+        parameters = self.extract_field_value(parameters, "features")
+        parameters = self.extract_field_value(parameters, "label")
+        parameters = self.extract_field_value(parameters, "tol")
+        parameters = self.extract_field_value(parameters, "regularization")   
+        parameters = self.extract_field_value(parameters, "max_iter")  
+
+        if int(platform_id) == 1:
+            # to spark
+            parameters["paramgrid"] = {"max_iter": parameters["max_iter"]}
+            parameters["reg_param"] = parameters["regularization"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        self.features["max_iter"] += int(self.parameters["max_iter"])
-        return self.features
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
 
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label']
+        n_distinct_values = self.input.columns[self.label].distinct_values
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': n_distinct_values,
+            'min_value': 0,
+            'max_value': n_distinct_values
+        })
+        self.output.recalculate()
+
+        return [self.output]
 
 
 class MaxAbsOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
+        self.spark_convert_features = True
+
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+
+        parameters = self.extract_field_value(parameters, "attributes")
+        parameters = self.extract_field_value(parameters, "alias")
+
+        parameters['attribute'] = parameters['attributes']
+
+        return parameters
+
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label']
+        n_distinct_values = self.input.columns[self.label].distinct_values
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': n_distinct_values,
+            'min_value': 0,
+            'max_value': n_distinct_values
+        })
+        self.output.recalculate()
+
+        return [self.output]
 
 
 class MinMaxOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
+        self.spark_convert_features = True
+
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+
+        parameters = self.extract_field_value(parameters, "attribute")
+        parameters = self.extract_field_value(parameters, "alias")
+
+        parameters['attributes'] = parameters['attribute']
+
+        return parameters
+
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label']
+        n_distinct_values = self.input.columns[self.label].distinct_values
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': n_distinct_values,
+            'min_value': 0,
+            'max_value': n_distinct_values
+        })
+        self.output.recalculate()
+
+        return [self.output]
+
+
+
 
 
 class MLPClassifierOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0, "max_iter": 0}
-        # , "tol": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters["max_iterations"])
-        else:
-            self.features["max_iter"] = int(self.parameters["max_iter"])
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-             "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
 
 
 class MLPRegressorOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0, "max_iter": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         pass
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters["max_iterations"])
-        else:
-            self.features["max_iter"] = int(self.parameters["max_iter"])
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"],
-        }
-        return merged
-
 
 class NaiveBayesClassificationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features', 'label', 'model_type', 'smoothing']
-        self.pandas = ['features', 'label', 'type', 'var_smoothing']
-        self.features = {"freq": 0}
-        # TODO: como saber de 1 coluna ja e uma feature.
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-        }
-        return merged
-
 
 class ProjectionOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 0.9
+        self.features = {}
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_LESS
         self.n_input = 1
         self.n_output = 1
@@ -1721,11 +1633,6 @@ class ProjectionOperationModel(OperationModel):
         if "value" in parameters.get("attributes", {}):
             parameters["attributes"] = parameters["attributes"]["value"]
         return parameters
-
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -1762,24 +1669,12 @@ class ProjectionOperationModel(OperationModel):
 class OneHotEncoderOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 1.05
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, parameters):
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += len(self.parameters["attributes"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-        }
-        return merged
 
 
 class OutlierDetectionOperationModel(GenericOperationModel):
@@ -1827,10 +1722,7 @@ class RandomForestRegressorOperationModel(GenericOperationModel):
 class RemoveDuplicatedRowsOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 0.9
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_REDUCE
 
     def convert(self, platform_id=None):
@@ -1915,10 +1807,7 @@ class RemoveStopWordsOperationModel(GenericOperationModel):
 class ReplaceValueOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
         self.n_input = 1
         self.n_output = 1
@@ -1931,11 +1820,6 @@ class ReplaceValueOperationModel(OperationModel):
             parameters["attributes"] = parameters["attributes"]["value"]
         return parameters
 
-    def extract_features(self):
-        if "attributes" in self.parameters["attributes"]:
-            self.features["freq"] = len(self.parameters["attributes"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -1967,10 +1851,7 @@ class ReplaceValueOperationModel(OperationModel):
 class SampleOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = []
-        self.pandas = []
-        self.features = {"freq": 0, 'percent': 0, 'value': 0, 'head': 0}
-        self.data_amplification = 0.7
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_WIDE_INFO_LESS
 
     def convert(self, platform_id=None):
@@ -1995,15 +1876,6 @@ class SampleOperationModel(OperationModel):
                  parameters["fraction"] = parameters["fraction"]["value"]
         return parameters
 
-#     def extract_features(self):
-#         type = self.parameters["type"]
-#         if type == "percent":
-#             self.features[type] = float(self.parameters["fraction"])
-#             self.data_amplification = self.features[type]
-#         else:
-#             self.features[type] = int(self.parameters["value"])
-#         self.features["data_amplification"] = [self.data_amplification]
-#         return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -2049,17 +1921,13 @@ class SampleOperationModel(OperationModel):
 class SetIntersectionOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 0.7
         self.behavior = self.PHYSICAL_BEHAVIOR_HASH_REDUCE
 
 
 class SortOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_RANGE
         self.n_input = 1
         self.n_output = 1
@@ -2071,10 +1939,6 @@ class SortOperationModel(OperationModel):
             parameters["attributes"] = parameters["attributes"]["value"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -2099,10 +1963,7 @@ class SortOperationModel(OperationModel):
 class SplitOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ["weights"]
-        self.pandas = ["weights"]
-        self.features = {"freq": 0}
-        self.data_amplification = 1.0
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_WIDE_INFO_EQ
 
     def convert(self, platform_id=None):
@@ -2113,16 +1974,11 @@ class SplitOperationModel(OperationModel):
                     parameters["weights"] = float(parameters["weights"]["value"])
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
 
 class SplitKFoldOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 1.0
         self.behavior = "not-supported"
 
 
@@ -2142,6 +1998,42 @@ class StandardScalerOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
+        self.spark_convert_features = True
+
+    def convert(self, platform_id=None):
+        parameters = self.parameters.copy()
+
+        parameters = self.extract_field_value(parameters, "attributes")
+        parameters = self.extract_field_value(parameters, "with_mean")
+        parameters = self.extract_field_value(parameters, "with_std")
+        parameters['attribute'] = parameters['attributes'] 
+
+
+
+        return parameters
+
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label']
+        n_distinct_values = self.input.columns[self.label].distinct_values
+        
+        self.output.create_new_column(**{
+            "name": parameters["alias"],
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_columns': n_distinct_values,
+            'min_value': 0,
+            'max_value': n_distinct_values
+        })
+        self.output.recalculate()
+
+        return [self.output]
 
 
 class STDBSCANOperationModel(GenericOperationModel):
@@ -2153,7 +2045,6 @@ class STDBSCANOperationModel(GenericOperationModel):
 class SummaryStatisticsOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 0
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
     def convert(self, platform_id=None):
@@ -2166,11 +2057,7 @@ class SummaryStatisticsOperationModel(GenericOperationModel):
 class SVMClassificationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.pandas = ['features', 'label', 'prediction', 'max_iter', 'tol']
-        self.features = {"freq": 0, "max_iter": 0}
-        self.extract_features()
-        # TODO: como saber de 1 coluna ja e uma feature.
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
         self.n_input = 1
         self.n_output = 1
@@ -2199,20 +2086,7 @@ class SVMClassificationOperationModel(OperationModel):
         parameters["kernel"] = "linear"
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] += 1
-        self.features["data_amplification"] = [self.data_amplification]
-        if self.platform_base == 1:
-            self.features["max_iter"] = int(self.parameters.get("max_iter", 100))
-        else:
-            self.features["max_iter"] = int(self.parameters["max_iter"])
-        return self.features
 
-    def merge_features_info(self, info1, info2):
-        merged = {
-            "max_iter": info1["max_iter"] + info2["max_iter"]
-        }
-        return merged
 
     def estimate_output(self, base_statistics):
         self.input = copy.deepcopy(base_statistics[0])
@@ -2236,21 +2110,6 @@ class SVMClassificationOperationModel(OperationModel):
         self.output.recalculate()
 
         return [self.output]
-
-#     def gen_model(self):
-
-#         col1 = (self.input.n_rows**2) * np.log(len(self.features_col))
-#         col2 = ((self.features["max_iter"]/100)**2.7182)
-#         return {
-#             #v1
-#             "n_rows": self.input.n_rows,
-#             "max_iter":  col2,
-            
-#             #v2
-#             "mix": (col1  * col2)/100_000,
-#             #"n_features": len(self.features_col),
-#             "platform_id": self.platform_target
-#         }
     
     def gen_model(self, platform_target=None):
         col1 = (self.input.n_rows**2) * len(self.features_col)**(1/5)
@@ -2279,9 +2138,7 @@ class SVMClassificationOperationModel(OperationModel):
 class TransformationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['expression']
-        self.pandas = ['expression']
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
         self.n_input = 1
         self.n_output = 1
@@ -2299,10 +2156,6 @@ class TransformationOperationModel(OperationModel):
             parameters["expression"] = parameters["expression"]["value"]
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] = len(self.parameters["expression"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
 
 
     def estimate_output(self, base_statistics):
@@ -2374,29 +2227,18 @@ class TransformationOperationModel(OperationModel):
 class TokenizerOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.spark = ['attributes']
-        self.pandas = ['attributes']
-        self.features = {"freq": 0}
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_SERIAL_EQ
 
     def convert(self, parameters):
         return parameters
 
-    def extract_features(self):
-        self.features["freq"] = len(self.parameters["attributes"])
-        self.features["data_amplification"] = [self.data_amplification]
-        return self.features
-
-    def merge_features_info(self, info1, info2):
-        merged = {
-        }
-        return merged
 
 
 class VisualizationOperationModel(GenericOperationModel):
     def __init__(self, parameters):
         GenericOperationModel.__init__(self, parameters)
-        self.data_amplification = 0
+        
         self.behavior = self.PHYSICAL_BEHAVIOR_VISUALIZATION
 
 

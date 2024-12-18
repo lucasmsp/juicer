@@ -47,6 +47,7 @@ from pyspark.ml.tuning import *
 from pyspark.ml.recommendation import *
 from pyspark.ml.regression import *
 from pyspark.mllib.evaluation import *
+from pyspark.ml.functions import vector_to_array
 from juicer import privaaas
 from juicer.util import dataframe_util, get_emitter
 from juicer.spark.reports import *
@@ -55,7 +56,8 @@ from juicer.spark.util import assemble_features_pipeline_model
 from juicer.spark.custom_library import *
 
 import pandas as pd
-pd.DataFrame.iteritems = pd.DataFrame.items
+import cudf
+# pd.DataFrame.iteritems = pd.DataFrame.items
 # FIX TO USE PANDAS 2.0 with Spark 3.1.5rc
 
 import traceback
@@ -78,14 +80,39 @@ def sklearn_logging(msg):
     print(msg)
 
 def migrate_data(task_id, data, target_platform, spark_session, emit_event, parent_id):
-    if (target_platform == 4) and hasattr(data, 'toPandas'):
-        data = data.toPandas()
-        emit_event(name='update task', message=_('Data of parent "{}" was converted from Spark\'s DataFrame to Pandas.'.format(parent_id)),
-                   identifier=task_id, status='RUNNING')
-    elif (target_platform == 1) and isinstance(data, pd.DataFrame):
+    # 1 - spark
+    # 4 - pandas
+    # 6 - cudf
+    if (target_platform == 1) and isinstance(data, pd.DataFrame): # source: pandas target: spark - ok
         data = spark_session.createDataFrame(data)
         emit_event(name='update task', message=_('Data of parent "{}" was converted from Pandas\'s DataFrame to Spark.'.format(parent_id)),
                    identifier=task_id, status='RUNNING')
+        
+    elif (target_platform == 1) and hasattr(data, 'to_pandas'): # source: cudf target: spark  - ok
+        data = spark_session.createDataFrame(data.to_pandas())
+        emit_event(name='update task', message=_('Data of parent "{}" was converted from cuDF\'s DataFrame to Spark.'.format(parent_id)),
+                   identifier=task_id, status='RUNNING')
+    
+    elif (target_platform == 4) and hasattr(data, 'toPandas'): # source: spark target: pandas - ok
+        data = data.toPandas()
+        emit_event(name='update task', message=_('Data of parent "{}" was converted from Spark\'s DataFrame to Pandas.'.format(parent_id)),
+                   identifier=task_id, status='RUNNING')
+        
+    elif (target_platform == 4) and hasattr(data, 'to_pandas'): # source: cudf target: pandas - ok
+        data = data.to_pandas()
+        emit_event(name='update task', message=_('Data of parent "{}" was converted from cuDF\'s DataFrame to Pandas.'.format(parent_id)),
+                   identifier=task_id, status='RUNNING')
+        
+    elif (target_platform == 6) and isinstance(data, pd.DataFrame): # source: pandas target: cudf - ok
+        data = cudf.from_pandas(data)
+        emit_event(name='update task', message=_('Data of parent "{}" was converted from Pandas\'s DataFrame to cuDF.'.format(parent_id)),
+                   identifier=task_id, status='RUNNING')
+        
+    elif (target_platform == 6) and hasattr(data, 'toPandas'): # source: spark target: cudf - ok
+        data = cudf.from_pandas(data.toPandas())
+        emit_event(name='update task', message=_('Data of parent "{}" was converted from Spark\'s DataFrame to cuDF.'.format(parent_id)),
+                   identifier=task_id, status='RUNNING')
+        
     return data
 
 executor = ThreadPoolExecutor(max_workers=3*{{instances|length}})
@@ -159,7 +186,11 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
     {%- endif %}
     start = timer()
     # --- Begin operation code ---- #
+    {%- if target_platform == 6 %}
+    {{instance.generate_code().strip().replace("pd.read","cudf.read") | indent(width=4, first=False)}}
+    {%- else %}
     {{instance.generate_code().strip() | indent(width=4, first=False)}}
+    {%- endif %}
     # --- End operation code ---- #
 
     {%- if not plain %}
@@ -195,6 +226,25 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
                identifier=task_id, status='RUNNING')
     {%- endif %}
     {%- endif %}
+
+    {%- elif target_platform  == 6 %}
+    {%- if instance.contains_results() %}
+    outputs = [(name, out) for name, out in results.items() if isinstance(out, cudf.DataFrame)]
+    {%- if instance.has_code and instance.enabled and instance.contains_sample %}
+    for name, out in outputs:
+        out = out.head(50).to_pandas()
+        dataframe_util.emit_sample_sklearn(task_id, out, emit_event, name)
+    {%- endif %}
+    {%- if instance.has_code and instance.enabled and instance.contains_schema %}
+    for name, out in outputs:
+        out = out.head(50).to_pandas()
+        dataframe_util.emit_schema_sklearn(task_id, out, emit_event, name)
+        n_rows = len(out)
+        emit_event(name='update task', message=_('Records in this output: '+str(n_rows)),
+               identifier=task_id, status='RUNNING')
+    {%- endif %}
+    {%- endif %}
+
     {%- elif target_platform  == 1 %}
     {%- if instance.contains_results() %}
     df_types = (DataFrame, dataframe_util.LazySparkTransformationDataframe)

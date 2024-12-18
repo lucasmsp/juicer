@@ -281,8 +281,15 @@ class LemonadeJob(object):
                     flow['target_port_name'] = target_port[0]['slug']
                     flow['source_port_name'] = source_port[0]['slug']
 
-                    self.graph.add_edge(flow['source_id'], flow['target_id'],
+                    if flow['source_port_name'] == flow['target_port_name'] == "model":
+                        self.graph.nodes[flow['target_id']]['attr_dict']['col_label_trained'] = self.graph.nodes[flow['source_id']]["forms"]
+                        flow['unification_by_apply_model'] = True
+                        self.graph.add_edge(flow['source_id'], flow['target_id'],
                                         attr_dict=flow)
+                    
+                    else:
+                        self.graph.add_edge(flow['source_id'], flow['target_id'],
+                                            attr_dict=flow)
 
                     self.graph.nodes[flow['target_id']]['parents'][flow['target_port_name']] = flow['source_id']
                 else:
@@ -439,6 +446,7 @@ class LemonadeJob(object):
             slug_operation = task['operation']['slug']
 
             parameters = {}
+            
             not_empty_params = [(k, d) for k, d in
                                 list(task['forms'].items()) if d['value']]
             task['forms'] = dict(not_empty_params)
@@ -707,7 +715,7 @@ class LemonadeJob(object):
 
                     if slug == "data-reader":
                         base_id = int(task["parameters"]['data_source'])
-                        db = Dataset(base_id)
+                        db = Dataset(base_id, self.config)
                         db_size = db.disk_size
                         if db_size < 0:
                             raise Exception(self.ERROR_UNKNOWN_SIZE.format(db.name, db.base_id))

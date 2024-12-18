@@ -31,7 +31,7 @@ class AddColumnsOperation(Operation):
             {input1}.columns = ['{s1}'+c for c in {input1}.columns]
             {input2}.columns = ['{s2}'+c for c in {input2}.columns]
             
-            {out} = pd.merge({input1}, {input2}, left_index=True, 
+            {out} = {input1}.merge({input2}, left_index=True, 
             right_index=True) 
         """.format(out=self.output,
                    s1=self.suffixes[0],
@@ -651,12 +651,13 @@ class FilterOperation(Operation):
             {out} = {out}[{out}.apply({expr}, axis=1)]"""\
                     .replace(
                         "{out} = {out}[{out}.apply(", 
-                        "{out} = {out}.loc[{out}")\
+                        "{out} = {out}.loc[")\
                     .replace(
                         ", axis=1)", 
                         "")\
                     .format(out=self.output, expr=e)\
-                    .replace("lambda row: row", "")
+                    .replace("lambda row:", "")\
+                    .replace("row[", self.output+"[")
 
             indentation = " and "
             if len(filters) > 0:
@@ -748,12 +749,19 @@ class JoinOperation(Operation):
 
     def generate_code(self):
         if self.has_code:
+            
+            if self.named_inputs['input data 1'] == self.named_inputs['input data 2']:
+                copy = ".copy()"
+            else:
+                copy = ""
+
             code = """
+            second_input = {in2}{copy}
             cols1 = [ '{suf_l}' + c for c in {in1}.columns]
-            cols2 = [ '{suf_r}' + c for c in {in2}.columns]
+            cols2 = [ '{suf_r}' + c for c in second_input.columns]
             
             {in1}.columns = cols1
-            {in2}.columns = cols2
+            second_input.columns = cols2
             
             keys1 = ['{suf_l}' + c for c in {keys1}]
             keys2 = ['{suf_r}' + c  for c in {keys2}]
@@ -763,10 +771,11 @@ class JoinOperation(Operation):
                     {in1}[c] = {in1}[c].astype(float)
             
             for c in cols2:
-                if isinstance({in2}[c].dtype, pd.Int64Dtype):
-                    {in2}[c] = {in2}[c].astype(float)
+                if isinstance(second_input[c].dtype, pd.Int64Dtype):
+                    second_input[c] = second_input[c].astype(float)
                     
-            """.format(in1=self.named_inputs['input data 1'],
+            """.format(copy=copy,
+                       in1=self.named_inputs['input data 1'],
                        in2=self.named_inputs['input data 2'],
                        suf_l=self.suffixes[0], suf_r=self.suffixes[1],
                        keys1=self.left_attributes, keys2=self.right_attributes)
@@ -779,10 +788,10 @@ class JoinOperation(Operation):
             col1 = list(data1_tmp.columns)
             data1_tmp = pd.concat([{in1}, data1_tmp], axis=1, sort=False)
                 
-            data2_tmp = {in2}[keys2].applymap(lambda col: str(col).lower()).copy()
+            data2_tmp = second_input[keys2].applymap(lambda col: str(col).lower()).copy()
             data2_tmp.columns = [c + "_lower" for c in data2_tmp.columns]
             col2 = list(data2_tmp.columns)
-            data2_tmp = pd.concat([{in2}, data2_tmp], axis=1, sort=False)
+            data2_tmp = pd.concat([second_input, data2_tmp], axis=1, sort=False)
                     
             {out} = pd.merge(data1_tmp, data2_tmp, left_on=col1, right_on=col2,
                 copy=False, suffixes={suffixes}, how='{type}')
@@ -790,19 +799,17 @@ class JoinOperation(Operation):
             {out}.drop(col1+col2, axis=1, inplace=True)
                  """.format(out=self.output, type=self.join_type,
                             in1=self.named_inputs['input data 1'],
-                            in2=self.named_inputs['input data 2'],
                             id1=self.left_attributes,
                             id2=self.right_attributes,
                             suffixes=self.suffixes)
             else:
                 code += """
                     
-            {out} = pd.merge({in1}, {in2}, how='{type}', 
+            {out} = pd.merge({in1}, second_input, how='{type}', 
                     suffixes={suffixes},
                     left_on=keys1, right_on=keys2)
                  """.format(out=self.output, type=self.join_type,
                             in1=self.named_inputs['input data 1'],
-                            in2=self.named_inputs['input data 2'],
                             suffixes=self.suffixes)
 
             if self.not_keep_right_keys:

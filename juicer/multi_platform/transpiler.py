@@ -9,6 +9,9 @@ import json
 import logging
 import networkx as nx
 import redis
+from rq import Queue
+from urllib.parse import urlparse
+from textwrap import dedent
 import sys
 import uuid
 from collections import OrderedDict
@@ -17,13 +20,22 @@ from juicer import operation
 from juicer.transpiler import Transpiler, TranspilerUtils, DependencyController
 from juicer.spark.transpiler import SparkTranspiler
 from juicer.scikit_learn.transpiler import ScikitLearnTranspiler
+from juicer.cudf.cudf_transpiler import CuDFTranspiler
 
 from juicer import auditing
 from juicer.util.jinja2_custom import AutoPep8Extension
 from juicer.service import stand_service
 from juicer.util.template_util import HandleExceptionExtension
-from juicer.multi_platform.operations import OperationModeling
 
+from juicer.multi_platform.operations import OperationModeling
+from juicer.multi_platform.conversion_operations import (MaxAbsScalerSparkOperation,
+                                                         StandardScalerSparkOperation,
+                                                         MinMaxScalerSparkOperation)
+
+AUDITING_QUEUE_NAME = 'auditing'
+AUDITING_JOB_NAME = 'seed.jobs.auditing'
+
+log = logging.getLogger(__name__)
 
 # noinspection SpellCheckingInspection
 class MultiPlatformTranspiler(Transpiler):
@@ -38,6 +50,13 @@ class MultiPlatformTranspiler(Transpiler):
             slug_to_op_id, port_id_to_port)
         self.operations_spark = SparkTranspiler(configuration).operations
         self.operations_sklearn = ScikitLearnTranspiler(configuration).operations
+        self.operations_cudf = CuDFTranspiler(configuration).operations
+
+        self.operations_spark['max-abs-scaler'] = MaxAbsScalerSparkOperation
+        self.operations_spark['min-max-scaler'] = MinMaxScalerSparkOperation
+        self.operations_spark['standard-scaler'] = StandardScalerSparkOperation
+        self.operations_spark['logistic-regression'] = self.operations_spark['logistic-regression-classifier-model']
+
         self.requires_hive = False
         self.requires_hive_warehouse = False
         self.hive_metadata = None
@@ -55,10 +74,23 @@ class MultiPlatformTranspiler(Transpiler):
         return {'dict_msgs': dict_msgs}
 
     def get_operation_by_platform(self, operation_slug, platform_id):
-        if str(platform_id) == '1':
+
+        platform_id = str(platform_id)
+        class_name = None
+        if platform_id == '1':
+            if operation_slug == 'cast':
+                operation_slug = 'change-attribute'
             class_name = self.operations_spark[operation_slug]
-        else:
+        elif platform_id == '4':
+            if operation_slug == 'logistic-regression':
+                operation_slug = 'logistic-regression-model'
             class_name = self.operations_sklearn[operation_slug]
+        elif platform_id == '6':
+            if operation_slug == 'logistic-regression':
+                operation_slug = 'logistic-regression-model'
+            class_name = self.operations_cudf[operation_slug]
+        else:
+            raise Exception("Platform_id not supported !")
         return class_name
 
     def _assign_operations(self):
@@ -69,25 +101,6 @@ class MultiPlatformTranspiler(Transpiler):
                       workflow, deploy=False, export_notebook=False,
                       plain=False):
 
-        # if deploy:
-        #     # To be able to convert, workflow must obey all these rules:
-        #     # - 1 and exactly 1 data source;
-        #     # - Data source must be defined in Limonero with its attributes in
-        #     # order to define the schema for data input;
-        #     # - For ML models, it is required to have a Save Model operation;
-        #     total_ds = 0
-        #     for task in workflow['tasks']:
-        #         if not task.get('enabled', False):
-        #             continue
-        #         if task['operation']['slug'] in self.DATA_SOURCE_OPS:
-        #             total_ds += 1
-        #
-        #     if total_ds < 1:
-        #         raise ValueError(_(
-        #             'Workflow must have at least 1 data source to be deployed.')
-        #         )
-        #     tasks_ids = reversed(sorted_tasks_id)
-        # else:
         tasks_ids = sorted_tasks_id
 
         instances = OrderedDict()

@@ -56,7 +56,7 @@ class MultiWorkflow(object):
         self.workflow['disabled_tasks'] = self.disabled_tasks
 
         # Update workflow-json to inform the platform that should be executed in each job
-        # self.cm = CostModel()
+        # self.cm = CostModel(config=self.config)
         # self.cm.load_models()
         # current_jobs = self.cm.extract_jobs(self.workflow)
         # self.set_platforms(current_jobs)
@@ -99,10 +99,12 @@ class MultiWorkflow(object):
         result = self.cm.where_to_run(rows)
         platforms = result['flow']
 
+        mapping_platforms = {"Spark":1, "Pandas": 4, "cuDF": 6}
+
         for i, job_id in enumerate(jobs):
             job = jobs[job_id]
             tasks = job["tasks"]
-            p = 1 if platforms[i] == "Spark" else 4
+            p = mapping_platforms[platforms[i]]
             for j, task in enumerate(self.workflow['tasks']):
                 if task["id"] in tasks:
                     self.workflow['tasks'][j]['forms']["multiplatform"] = {"value": {"target": p}}
@@ -115,7 +117,7 @@ class MultiWorkflow(object):
         for i, task in enumerate(self.workflow['tasks']):
             comments = str(task['forms'].get('comment', {}).get('value', ""))
             task['forms']["comment"]['value'] = comments
-            if comments in ["1", "4"]:
+            if comments in ["1", "4", "6"]:
                 print("platform: {}".format(comments))
                 physical_plain = {"value": {"target": comments}}
                 self.workflow['tasks'][i]['forms']["multiplatform"] = physical_plain
@@ -317,6 +319,9 @@ class MultiWorkflow(object):
                     flow['target_port_name'] = target_port[0]['slug']
                     flow['source_port_name'] = source_port[0]['slug']
 
+                    if flow['source_port_name'] == flow['target_port_name'] == "model":
+                        self.graph.nodes[flow['target_id']]['attr_dict']['col_label_trained'] = self.graph.nodes[flow['source_id']]["forms"]
+
                     self.graph.add_edge(flow['source_id'], flow['target_id'],
                                         attr_dict=flow)
                     self.graph.nodes[flow['target_id']]['parents'].append(
@@ -338,63 +343,6 @@ class MultiWorkflow(object):
         #     #        nx.edge_dfs(self.graph, node, orientation='reverse'))
 
         return self.graph
-
-    # def builds_sorted_workflow_graph(self, tasks, flows):
-
-    #     # Querying all operations from tahiti one time
-    #     operations_tahiti = dict(
-    #         [(op['id'], op) for op in self._get_operations()])
-    #     for task in tasks:
-    #         operation = operations_tahiti.get(task.get('operation')['id'])
-    #         if operation is not None:
-    #             ports_list = operations_tahiti[operation]['ports']
-    #             # Get operation requirements in tahiti
-    #             result = {
-    #                 'N_INPUT': 0,
-    #                 'N_OUTPUT': 0,
-    #                 'M_INPUT': 'None',
-    #                 'M_OUTPUT': 'None'
-    #             }
-
-    #             for port in ports_list:
-    #                 if port['type'] == 'INPUT':
-    #                     result['M_INPUT'] = port['multiplicity']
-    #                     if 'N_INPUT' in result:
-    #                         result['N_INPUT'] += 1
-    #                     else:
-    #                         result['N_INPUT'] = 1
-    #                 elif port['type'] == 'OUTPUT':
-    #                     result['M_OUTPUT'] = port['multiplicity']
-    #                     if 'N_OUTPUT' in result:
-    #                         result['N_OUTPUT'] += 1
-    #                     else:
-    #                         result['N_OUTPUT'] = 1
-    #             # return result
-    #             self.graph.add_node(
-    #                 task.get('id'),
-    #                 in_degree_required=result['N_INPUT'],
-    #                 in_degree_multiplicity_required=result['M_INPUT'],
-    #                 out_degree_required=result['N_OUTPUT'],
-    #                 out_degree_multiplicity_required=result['M_OUTPUT'],
-    #                 attr_dict=task)
-
-    #     for flow in flows:
-    #         self.graph.add_edge(flow['source_id'],
-    #                             flow['target_id'],
-    #                             attr_dict=flow)
-    #         #parents = self.graph.node[flow['target_id']].get('parents', [])
-    #         #parents.append(flow['source_id'])
-    #         #self.graph.node[flow['target_id']]['parents'] = parents
-
-    #     # updating in_degree and out_degree
-    #     for node in self.graph.nodes():
-    #         self.graph.node[node]['in_degree'] = self.graph. \
-    #             in_degree(node)
-    #         self.graph.node[node]['out_degree'] = self.graph. \
-    #             out_degree(node)
-    #         import pdb; pdb.set_trace()
-    #         self.graph.node[node]['parents'] = list(
-    #                 nx.edge_dfs(self.graph, node, orientation='reverse'))
 
     def plot_workflow_graph_image(self):
         """
@@ -604,43 +552,3 @@ class MultiWorkflow(object):
                         else:
                             value['value'] = f'{v}'
                         # print(f'>>> Set {prop} to {value["value"]} {type(value["value"])}')
-
-                # for k, v in list(task.get('forms').items()):
-                #     value = v.get('value')
-                #     if task['operation']['slug'] == 'user-filter' and \
-                #             k == 'filters': # FIXME: Needs to be dynamic
-                #         for filter_value in value:
-                #             value1 = str(filter_value.get('value', filter_value.get('default_value', '')))
-                #             filter_value['value'] = value1
-                #             for found in variable_re.findall(value1):
-                #                 v['value'] = self._replace_variable(all_vars, value, found)
-                #     else:
-
-                    # if isinstance(value, (str,)):
-                    #     for found in variable_re.findall(value):
-                    #         v['value'] = self._replace_variable(all_vars, value, found)
-                    # elif value is None:
-                    #     pass
-                    # elif isinstance(value, list):
-                    #     for index, value_in_list in enumerate(value):
-                    #         if isinstance(value_in_list, str):
-                    #             for found in variable_re.findall(value_in_list):
-                    #                 value_in_list[index] = self._replace_variable(
-                    #                     all_vars, value_in_list, found)
-                    #         elif isinstance(value_in_list, dict):
-                    #             for k1, value_in_dict in value_in_list.items():
-                    #                 if isinstance(value_in_dict, (str, )):
-                    #                     for found in variable_re.findall(value_in_dict):
-                    #                         value_in_list[k1] = self._replace_variable(all_vars, value_in_dict, found)
-                    #                 else:
-                    #                     print(type(value), value)
-
-
-                    # elif isinstance(value, dict):
-                    #     for k1, value_in_dict in value.items():
-                    #         for found in variable_re.findall(value_in_dict):
-                    #             value[k] = self._replace_variable(all_vars, value_in_dict, found)
-
-                    # else:
-                    #     print(value, type(value))
-

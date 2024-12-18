@@ -28,15 +28,13 @@ STAND_DB = "stand"
 TAHITI_DB = "tahiti"
 LIMONERO_DB = "limonero"
 
-HOST = "150.164.203.17"
-MYSQL_PORT = 43062
 
-def get_sql_connection(db_name="stand"):
+def get_sql_connection(host, port, db_name="stand"):
     # Connect to the database
-    connection = pymysql.connect(host=HOST,
+    connection = pymysql.connect(host=host,
                                  user='root',
                                  password='lemon',
-                                 port=MYSQL_PORT,
+                                 port=port,
                                  db=db_name,
                                  cursorclass=pymysql.cursors.DictCursor)
     return connection

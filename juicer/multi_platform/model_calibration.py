@@ -37,19 +37,27 @@ def log(msg):
     if DEBUG:
         print(msg)
 
-CONFIG_FILE = "/mnt/lucasmsp/juicer/juicer-config-local.yaml"
-MODELS_PATH = "/mnt/lucasmsp/thesis/models/models.pickle"
-
 class CostModel(object):
 
-    def __init__(self, current_job_id=None, last_job_id=None):
+    def __init__(self, config, current_job_id=None, last_job_id=None):
         self.lemonade_jobs = {}
         self.lemonade_jobs_excluded_by_database = []
         self.lemonade_jobs_excluded_by_operation = []
         self.lemonade_jobs_excluded_by_logs = []
 
+
+        if isinstance(config, str):
+            with open(config) as config_file:
+                juicer_config = yaml.load(config_file.read(), Loader=yaml.FullLoader)
+        else:
+            juicer_config = config
+        self.juicer_config = juicer_config
+
+
         # Connect to the database
-        self.connection = get_sql_connection()
+        mysql_host = self.juicer_config['thesis']['mysql_host']
+        mysql_port = self.juicer_config['thesis']['mysql_port']
+        self.connection = get_sql_connection(host=mysql_host, port=mysql_port)
 
         self.actions_ids = get_action_ids(self.connection)
         self.operation_slugs = get_slug_operations(self.connection)
@@ -62,15 +70,10 @@ class CostModel(object):
             last_job_id = get_last_job(self.connection)
         self.last_job_id = last_job_id
 
-        config = CONFIG_FILE
-        juicer_config = {}
-        with open(config) as config_file:
-            juicer_config = yaml.load(config_file.read(), Loader=yaml.FullLoader)
-
         locales_path = os.path.join(os.path.dirname(__file__), 'i18n', 'locales')
         t = gettext.translation('messages', locales_path, ["en"], fallback=True)
         t.install()
-        self.juicer_config = juicer_config
+
         self.models = {}
 
     def get_workflow_by_job_id(self, job_id):
@@ -351,7 +354,8 @@ class CostModel(object):
         """
         Carrega os modelos de regressão para cada caixa/plataforma suportada pelo Lemonade.
         """
-        self.models = pickle.load(open(MODELS_PATH, 'rb'))
+        models_path = self.juicer_config["thesis"].get("models_path", "")
+        self.models = pickle.load(open(models_path, 'rb'))
 
     # def save_database(self):
     #     filename = "/home/lucasmsp/workspace/doutorado/thesis/database.pickle"

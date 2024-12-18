@@ -9,8 +9,8 @@ import logging.config
 import os
 
 import yaml
-from juicer.compss.transpiler import COMPSsTranspiler
-from juicer.keras.transpiler import KerasTranspiler
+#from juicer.compss.transpiler import COMPSsTranspiler
+#from juicer.keras.transpiler import KerasTranspiler
 from juicer.multi_platform.transpiler import MultiPlatformTranspiler
 from juicer.runner import configuration
 from juicer.scikit_learn.transpiler import ScikitLearnTranspiler
@@ -53,12 +53,12 @@ def main(workflow_id, execute_main, params, config, deploy, export_notebook,
         if loader.platform['slug'] == "spark":
             transpiler = SparkTranspiler(configuration.get_config(),
                                          slug_to_op_id, port_id_to_port)
-        elif loader.platform['slug'] == "compss":
-            transpiler = COMPSsTranspiler(configuration.get_config())
+        # elif loader.platform['slug'] == "compss":
+        #     transpiler = COMPSsTranspiler(configuration.get_config())
         elif loader.platform['slug'] == "scikit-learn":
             transpiler = ScikitLearnTranspiler(configuration.get_config())
-        elif loader.platform['slug'] == 'keras':
-            transpiler = KerasTranspiler(configuration.get_config())
+        # elif loader.platform['slug'] == 'keras':
+        #     transpiler = KerasTranspiler(configuration.get_config())
         elif loader.platform.get('plugin'):
             plugin_factories = plugin_util.prepare_and_get_plugin_factory(
                 configuration.get_config(), loader.platform.get('id'))

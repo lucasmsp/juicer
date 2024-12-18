@@ -838,19 +838,18 @@ class ChangeAttributeOperation(Operation):
         self.has_code = len(self.named_inputs) == 1
 
     def generate_code(self):
-        del self.parameters['workflow_json']
+        # del self.parameters['workflow_json']
         code = []
-        if self.parameters.get(self.NEW_DATA_TYPE_PARAM,
-                               'keep') == self.KEEP_VALUE:
-            # Do not require processing data frame, change only meta data
-            code.append('{0} = {1}'.format(self.output,
+        code.append('{0} = {1}'.format(self.output,
                                            self.named_inputs['input data']))
-
+        if self.parameters.get(self.NEW_DATA_TYPE_PARAM) == self.KEEP_VALUE:
+            # Do not require processing data frame, change only meta data
+            
             for attr in self.attributes:
                 code.append(
                     "\ninx_{0} = [i for i, _ in enumerate({0}.schema) "
                     "if _.name.lower() == '{1}']".format(self.output,
-                                                         attr.lower()))
+                                                         attr['attribute'].lower()))
 
                 nullable = self.parameters.get(self.NULLABLE_PARAM,
                                                self.KEEP_VALUE)
@@ -873,7 +872,7 @@ class ChangeAttributeOperation(Operation):
                         ChangeAttributeOperation.change_meta(
                             self.output, attr, 'label', label == 'true'))
 
-            format_name = self.parameters[self.NEW_NAME_PARAM]
+            format_name = self.parameters.get(self.NEW_NAME_PARAM)
             if format_name:
                 rename = [
                     "withColumnRenamed('{}', '{}')".format(
@@ -887,7 +886,18 @@ class ChangeAttributeOperation(Operation):
 
         else:
             # Changing data type requires to rebuild data frame
-            pass
+            #pass
+            def _conv(ty):
+                if "Int" in ty:
+                    return "integer"
+                else:
+                    return ty
+
+            for attr in self.attributes:
+                t = _conv(attr['type'])
+                code.append("\n{out} = {out}.withColumn('{attr}', functions.col('{attr}').cast('{t}'))".format(
+                                out=self.output, attr=attr['attribute'], t=t
+                ))
         return '\n'.join(code)  # json.dumps(self.parameters)
 
     @staticmethod

@@ -21,13 +21,12 @@ import pandas as pd
 import datetime
 from gettext import gettext
 
-from juicer.multi_platform.auxiliar_services import get_sql_connection
-from juicer.multi_platform.auxiliar_services import STAND_DB
+from juicer.multi_platform.auxiliar_services import get_sql_connection, STAND_DB
 
 
 class Cluster(object):
 
-    def __init__(self, cluster_id):
+    def __init__(self, cluster_id, config):
         self.executors = None
         self.executor_memory = None
         self.executor_cores = None
@@ -39,11 +38,13 @@ class Cluster(object):
         self.spill_disk_threshold = None
         self.cluster_id = cluster_id
         self.total_memory = None
-        self.get_cluster_conf(cluster_id)
+        mysql_host = self.config['thesis']['mysql_host']
+        mysql_port = self.config['thesis']['mysql_port']
+        self.get_cluster_conf(cluster_id, mysql_host, mysql_port)
         
 
-    def get_cluster_conf(self, cluster_id):
-        connection = get_sql_connection(STAND_DB)
+    def get_cluster_conf(self, cluster_id, mysql_host, mysql_port):
+        connection = get_sql_connection(mysql_host, mysql_port, STAND_DB)
         with connection.cursor() as cursor:
             sql = """
             SELECT * FROM {STAND_DB}.cluster where id = {CLUSTER_ID};
