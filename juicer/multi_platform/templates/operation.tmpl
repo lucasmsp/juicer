@@ -187,9 +187,9 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
     start = timer()
     # --- Begin operation code ---- #
     {%- if target_platform == 6 %}
-    {{instance.generate_code().strip().replace("pd.read","cudf.read") | indent(width=4, first=False)}}
+    {{instance.generate_code().strip().replace("pd.read","cudf.read").replace("/srv/datasets", "/scratch/lucasmsp/datasets/") | indent(width=4, first=False)}}
     {%- else %}
-    {{instance.generate_code().strip() | indent(width=4, first=False)}}
+    {{instance.generate_code().strip().replace("/srv/datasets", "/scratch/lucasmsp/datasets") | indent(width=4, first=False)}}
     {%- endif %}
     # --- End operation code ---- #
 
