@@ -73,6 +73,9 @@ class ClusteringModelOperation(Operation):
                 else ""
 
             code = """
+        for c in {features}:
+            {input}[c] = {input}[c].astype('float32')
+        
         X = {input}[{features}]
         clustering_model = {algorithm}.fit(X)
 

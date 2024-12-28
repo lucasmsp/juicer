@@ -53,7 +53,7 @@ class CuDFTranspiler(Transpiler):
     def _assign_operations(self):
         etl_ops = {
             'add-columns': etl.AddColumnsOperation,
-            'add-rows': etl.UnionOperation,
+            'add-rows': cudf_etl.UnionOperation,
             'aggregation': etl.AggregationOperation,  # TODO: agg sem groupby
             'clean-missing': etl.CleanMissingOperation,
             'difference': etl.DifferenceOperation,
@@ -61,7 +61,7 @@ class CuDFTranspiler(Transpiler):
             'execute-python': etl.ExecutePythonOperation,
             'execute-sql': etl.ExecuteSQLOperation,
             'filter-selection': etl.FilterOperation,
-            'join': etl.JoinOperation,
+            'join': cudf_etl.JoinOperation,
             'k-fold': etl.SplitKFoldOperation,
             'locality-sensitive-hashing': feature_extraction.LSHOperation,
             'projection': etl.SelectOperation,
@@ -71,13 +71,13 @@ class CuDFTranspiler(Transpiler):
             'set-intersection': etl.IntersectionOperation,
             'sort': etl.SortOperation,
             'split': cudf_etl.SplitOperation,
-            'transformation': etl.TransformationOperation,
+            'transformation': cudf_etl.TransformationOperation,
             # TODO in 'transformation': test others functions
         }
 
         data_ops = {
             'data-reader': cudf_io.DataReaderOperationCUDF,
-            'data-writer': io.SaveOperation,
+            'data-writer': cudf_io.SaveOperation,
             'save': io.SaveOperation,
             # 'change-attribute': io.ChangeAttributesOperation,
         }

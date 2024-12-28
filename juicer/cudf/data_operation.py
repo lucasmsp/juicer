@@ -172,3 +172,273 @@ class DataReaderOperationCUDF(DataReaderOperation):
             'jdbc_code': jdbc_code
         }
         return dedent(self.render_template(ctx))
+
+
+
+class SaveOperation(Operation):
+    """
+    Saves the content of the DataFrame at the specified path.
+    """
+    NAME_PARAM = 'name'
+    PATH_PARAM = 'path'
+    STORAGE_ID_PARAM = 'storage'
+    FORMAT_PARAM = 'format'
+    TAGS_PARAM = 'tags'
+    OVERWRITE_MODE_PARAM = 'mode'
+    HEADER_PARAM = 'header'
+
+    MODE_ERROR = 'error'
+    MODE_APPEND = 'append'
+    MODE_OVERWRITE = 'overwrite'
+    MODE_IGNORE = 'ignore'
+
+    FORMAT_PICKLE = 'PICKLE'
+    FORMAT_CSV = 'CSV'
+    FORMAT_JSON = 'JSON'
+    FORMAT_PARQUET = 'PARQUET'
+
+    USER_PARAM = 'user'
+    WORKFLOW_ID_PARAM = 'workflow_id'
+
+    PANDAS_TO_LIMONERO_DATA_TYPES = {
+        'object': "CHARACTER",
+        'datetime64[ns]': "DATETIME",
+        'float64': "DOUBLE",
+        'float32': "FLOAT",
+        'int64': "LONG",
+        'Int64': "INTEGER",
+        'int32': "INTEGER",
+        'int16': "INTEGER",
+        'int8': "INTEGER",
+        'decimal128': "FLOAT",
+    }
+
+    def __init__(self, parameters, named_inputs, named_outputs):
+        Operation.__init__(self, parameters, named_inputs, named_outputs)
+
+        for att in [self.NAME_PARAM, self.FORMAT_PARAM, self.PATH_PARAM]:
+            if att not in parameters:
+                raise ValueError(
+                    _("Parameter '{}' must be informed for task {}").format(
+                        att, self.__class__))
+
+        self.name = parameters.get(self.NAME_PARAM)
+        self.tags = parameters.get(self.TAGS_PARAM)
+        self.format = parameters.get(self.FORMAT_PARAM, self.FORMAT_CSV)
+        self.path = parameters.get(self.PATH_PARAM, '.')
+        self.mode = parameters.get(self.OVERWRITE_MODE_PARAM, self.MODE_ERROR)
+        self.storage_id = parameters.get(self.STORAGE_ID_PARAM)
+        self.user = parameters.get(self.USER_PARAM)
+        self.workflow_id = parameters.get(self.WORKFLOW_ID_PARAM)
+
+        self.header = parameters.get(self.HEADER_PARAM, False) in (1, '1', True)
+
+        self.output = self.named_outputs.get('output data',
+                                             'output_data_{}'.format(
+                                                 self.order))
+
+        self.filename = self.name
+        self.has_code = len(self.named_inputs) == 1
+
+    def generate_code(self):
+
+        limonero_config = \
+            self.parameters['configuration']['juicer']['services']['limonero']
+        url = '{}'.format(limonero_config['url'], self.mode)
+        token = str(limonero_config['auth_token'])
+        storage = limonero_service.get_storage_info(url, token, self.storage_id)
+
+        if storage['type'] != 'HDFS':
+            raise ValueError(_('Storage type not supported: {}').format(
+                storage['type']))
+
+        protect = (self.parameters.get('export_notebook', False) or 
+             self.parameters.get('plain', False)) or self.plain
+
+        if storage['url'].endswith('/'):
+            storage['url'] = storage['url'][:-1]
+        if self.path.endswith('/'):
+            self.path = self.path[:-1]
+
+        if self.path.startswith('/'):
+            self.path = self.path[1:]
+
+        final_url = '{}/limonero/user_data/{}/{}/{}'.format(
+            storage['url'],
+            self.user['id'],
+            self.path,
+            self.name.replace(' ', '_'))
+
+        if self.format == self.FORMAT_CSV and not final_url.endswith('.csv'):
+            final_url += '.csv'
+        elif self.format == self.FORMAT_JSON and not final_url.endswith(
+                '.json'):
+            final_url += '.json'
+        elif self.format == self.FORMAT_PARQUET and not final_url.endswith(
+                '.parquet'):
+            final_url += '.parquet'
+
+        parsed = urlparse(final_url)
+
+        df_input = self.named_inputs['input data']
+        extra_params = storage.get('extra_params') \
+            if storage.get('extra_params') is not None else "{}"
+        extra_params = json.loads(extra_params)
+
+        hdfs_user = extra_params.get('user', parsed.username) or 'hadoop'
+        self.template = """
+            path = '{{path}}'
+            {%- if scheme == 'hdfs' and not protect %}
+            
+            fs = hdfs.HadoopFileSystem(host='{{hdfs_server}}', 
+                                 port={{hdfs_port}},
+                                 user='{{hdfs_user}}')
+            exists = fs.get_file_info(path).type.value == 2
+            {%- elif scheme == 'file' or protect %}
+            exists = os.path.exists(path)
+            {%- endif %}
+
+            mode = '{{mode}}'
+            if mode not in ('error', 'ignore', 'overwrite'):
+                raise ValueError('{{error_invalid_mode}}')
+            if exists:
+                if mode == 'error':
+                    raise ValueError('{{error_file_exists}}')
+                elif mode == 'ignore':
+                    emit_event(name='update task',
+                        message='{{warn_ignored}}',
+                        status='COMPLETED',
+                        identifier='{{task_id}}')
+                else:
+                    {%- if scheme == 'hdfs' and not protect %}
+                        fs.delete_file(path)
+                    {%- elif scheme == 'file' or protect %}
+                        os.remove(path)
+                        parent_dir = os.path.dirname(path)
+                        Path(parent_dir).mkdir(parents=True, exist_ok=True)
+                    {%- endif %}
+            else:
+                {%-if scheme == 'hdfs' and not protect %}    
+                fs.create_dir(os.path.dirname(path))
+                {%- elif scheme == 'file' %}
+                parent_dir = os.path.dirname(path)
+                Path(parent_dir).mkdir(parents=True, exist_ok=True)
+                {%- else %}
+                pass
+                {%- endif%}
+            
+            {%- if format == FORMAT_CSV %}
+            {%- if scheme == 'hdfs' and not protect %}
+            from io import StringIO
+            with fs.open_output_stream(path) as f:
+                s = StringIO()
+                {{input}}.to_csv(s, sep=str(','), 
+                header={{header}}, index=False, encoding='utf-8')
+                f.write(s.getvalue().encode())               
+            {%- elif scheme == 'file' or protect %}
+            {{input}}.to_csv(path, sep=str(','),
+            header={{header}}, index=False, encoding='utf-8')
+            {%- endif %}
+            
+            {%- elif format == FORMAT_PARQUET %}
+            {%- if scheme == 'hdfs' and not protect %}
+            from io import BytesIO
+            with fs.open(path, 'wb') as f:
+                s = BytesIO()
+                {{input}}.to_parquet(s, engine='pyarrow')
+                f.write(s.getvalue())               
+            {%- elif scheme == 'file' or protect %}
+            {{input}}.to_parquet(path, engine='pyarrow')
+            {%- endif %}
+            
+            {%- elif format == FORMAT_JSON %}
+            {%- if scheme == 'hdfs' and not protect %}
+            from io import StringIO
+            with fs.open(path, 'wb') as f:
+                s = StringIO()
+                {{input}}.to_json(s, orient='records')
+                f.write(s.getvalue().encode())             
+            {%- elif scheme == 'file' or protect %}
+            {{input}}.to_json(path, orient='records')
+            {%- endif %}
+            {%- endif %}
+            
+            {%-if not protect %}
+            # Code to update Limonero metadata information
+            from juicer.service.limonero_service import register_datasource
+            types_names = {{data_types}}
+
+            write_header = {{header}}
+            attributes = []
+            for attr in {{input}}.columns:
+                type_name = {{input}}.dtypes[attr]
+                precision = None
+                scale = None
+                attributes.append({
+                  'enumeration': 0,
+                  'feature': 0,
+                  'label': 0,
+                  'name': attr,
+                  'type': types_names[str(type_name)],
+                  'nullable': True,
+                  'metadata': None,
+                  'precision': precision,
+                  'scale': scale
+                })
+            parameters = {
+                'name': "{{name}}",
+                'is_first_line_header': write_header,
+                'enabled': 1,
+                'is_public': 0,
+                'format': "{{format}}",
+                'storage_id': {{storage}},
+                'description': "{{description}}",
+                'user_id': "{{user_id}}",
+                'user_login': "{{user_login}}",
+                'user_name': "{{user_name}}",
+                'workflow_id': "{{workflow_id}}",
+                'task_id': '{{task_id}}',
+                'url': "{{final_url}}",
+                'attributes': attributes
+            }
+            register_datasource('{{url}}', parameters, '{{token}}', 'overwrite')
+            {%- endif %}
+        """
+        path = parsed.path
+
+        ctx = dict(protect=protect,
+                   path=path if not protect else os.path.basename(path),
+                   hdfs_server=parsed.hostname,
+                   hdfs_port=parsed.port,
+                   hdfs_user=hdfs_user,
+                   scheme=parsed.scheme,
+                   name=self.name,
+                   mode=self.mode,
+                   storage=self.storage_id,
+                   description=_('Data source generated by workflow {}').format(
+                       self.workflow_id),
+                   workflow_id=self.workflow_id,
+                   format=self.format,
+                   header=self.header,
+                   user_name=self.user['name'],
+                   user_id=self.user['id'],
+                   user_login=self.user['login'],
+                   tags=repr(self.tags),
+                   FORMAT_CSV=self.FORMAT_CSV,
+                   FORMAT_PICKLE=self.FORMAT_PICKLE,
+                   FORMAT_JSON=self.FORMAT_JSON,
+                   FORMAT_PARQUET=self.FORMAT_PARQUET,
+                   data_types=json.dumps(self.PANDAS_TO_LIMONERO_DATA_TYPES),
+                   final_url=final_url,
+                   input=df_input,
+                   token=token,
+                   url=url,
+                   error_file_exists=_('File already exists'),
+                   warn_ignored=_('File not written (already exists)'),
+                   error_invalid_mode=_('Invalid mode {}').format(self.mode),
+                   uuid=uuid.uuid4().hex,
+                   storage_url=storage['url'],
+                   task_id=self.parameters['task_id'],
+                   )
+
+        return dedent(self.render_template(ctx))

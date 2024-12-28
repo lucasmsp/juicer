@@ -55,8 +55,8 @@ class CostModel(object):
 
 
         # Connect to the database
-        mysql_host = self.juicer_config['thesis']['mysql_host']
-        mysql_port = self.juicer_config['thesis']['mysql_port']
+        mysql_host = self.juicer_config['juicer']['thesis']['mysql_host']
+        mysql_port = self.juicer_config['juicer']['thesis']['mysql_port']
         self.connection = get_sql_connection(host=mysql_host, port=mysql_port)
 
         self.actions_ids = get_action_ids(self.connection)
@@ -122,7 +122,7 @@ class CostModel(object):
                         current_job_log['task_id'] = current_job_log['task_id'].mask(current_job_log["message"].str.contains("was converted"), other=current_job_log['task_id'].apply('{}-migration'.format))
                     
                     current_job_log = current_job_log[["task_id", "l_status", "operation_id", "l_date", 'message']]\
-                        .groupby(['task_id', "operation_id"]).agg(MIN=("l_date", min), MAX=("l_date", max))\
+                        .groupby(['task_id', "operation_id"]).agg(MIN=("l_date", 'min'), MAX=("l_date", 'max'))\
                         .sort_values(["MAX", "MIN"])\
                         .reset_index()
                     

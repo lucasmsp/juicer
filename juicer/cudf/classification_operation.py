@@ -76,6 +76,9 @@ class ClassificationModelOperation(Operation):
             fit_code = ""
 
         code = """
+        for c in {features}:
+            {input}[c] = {input}[c].astype('float32')
+        
         X = {input}[{features}]
         y = {input}[{label}]
         classification_model = algorithm.fit(X, y)

@@ -1109,6 +1109,7 @@ class JoinOperationModel(OperationModel):
         parameters = self.parameters.copy()
         if "value" in self.parameters["aliases"]:
             parameters["aliases"] = self.parameters["aliases"]["value"]
+            parameters[self.MATCH_CASE_PARAM] = self.parameters[self.MATCH_CASE_PARAM]["value"]
             parameters[self.JOIN_TYPE_PARAM] = self.parameters[self.JOIN_TYPE_PARAM]["value"]
             parameters[self.LEFT_ATTRIBUTES_PARAM] = self.parameters[self.LEFT_ATTRIBUTES_PARAM]["value"]
             parameters[self.RIGHT_ATTRIBUTES_PARAM] = self.parameters[self.RIGHT_ATTRIBUTES_PARAM]["value"]

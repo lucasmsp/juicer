@@ -57,10 +57,12 @@ class HistoricalLemonadeJob(LemonadeJob):
     def __init__(self, stand, job_log, actions, juicer_config, slugs_operation, mode):
 
         self.stand = stand
+        self.juicer_config = juicer_config
         workflow = json.loads(stand["workflow_definition"])
         super().__init__(workflow, actions, juicer_config, slugs_operation, mode)
 
-        self.cluster = Cluster(int(stand['cluster_id']))
+
+        self.cluster = Cluster(int(stand['cluster_id']), self.juicer_config)
         self.platform = int(self.workflow['platform']['id'])
         self.job_id = stand['id']
         self.job_log = job_log

@@ -38,8 +38,9 @@ class Cluster(object):
         self.spill_disk_threshold = None
         self.cluster_id = cluster_id
         self.total_memory = None
-        mysql_host = self.config['thesis']['mysql_host']
-        mysql_port = self.config['thesis']['mysql_port']
+        self.config = config
+        mysql_host = self.config['juicer']['thesis']['mysql_host']
+        mysql_port = self.config['juicer']['thesis']['mysql_port']
         self.get_cluster_conf(cluster_id, mysql_host, mysql_port)
         
 

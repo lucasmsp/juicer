@@ -54,8 +54,8 @@ class Dataset(object):
         self.stats = None
 
         self.config = config
-        self.limonero_host = self.config['thesis']['limonero_host']
-        self.limonero_port = self.config['thesis']['limonero_port']
+        self.limonero_host = self.config['juicer']['thesis']['limonero_host']
+        self.limonero_port = self.config['juicer']['thesis']['limonero_port']
         self.get_base_stats()
 
     def __repr__(self):
