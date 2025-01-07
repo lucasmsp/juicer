@@ -204,7 +204,7 @@ class CostModel(object):
         tmp = []
         for lj in jobs_to_gen.values():
             try:
-                jobs = lj.get_dataflow("v5")
+                jobs = lj.get_dataflow()
                 if jobs:
                     for d in jobs:
                         tmp.append(d)
@@ -234,21 +234,21 @@ class CostModel(object):
 
         return rows
     
-    def gen_dataflow_model_v5(self, lj=None, base_calibration=True):
+    def gen_dataflow_model(self, lj=None, base_calibration=True):
 
         if lj:
             jobs_to_gen = {"single-input": lj}
         else:
             jobs_to_gen = self.lemonade_jobs
     
-        tmp = []
+        jobs_objects = []
         for lj in jobs_to_gen.values():
             
             try:
-                jobs = lj.get_dataflow("v5", base_calibration)
+                jobs = lj.get_dataflow(base_calibration)
                 if jobs:
                     for d in jobs:
-                        tmp.append(d)
+                        jobs_objects.append(d)
             except Exception as e:
                 msg = str(e)
                 if "[WARN] Skipping lemonade job because it contains an operation" in msg:
@@ -263,35 +263,56 @@ class CostModel(object):
         rows = []
         operations_idx = 6
         logs_idx = 7
-        
-        for idx, r in enumerate(tmp):
-            t = [r[i] for i in range(operations_idx)] + [r[logs_idx]]
-            dataflow.append(t)
-            
-            row = {}
-            for slug, op in r[operations_idx].items():
-                #try:
-                f1 = op.gen_model(platform_target=1)
-                f4 = op.gen_model(platform_target=4)
-                #except Exception as e:
-                #    print(op.input)
-                #    print(op.output)
-                #    print(tmp[idx])
-                #    print(str(e))
-                #    traceback.print_exc()
-                for param, v in f1.items():
-                    row["{}-spark-{}".format(slug, param)] = v
-                for param, v in f4.items():
-                    row["{}-pandas-{}".format(slug, param)] = v
-            rows.append(row)
 
-        rows = pd.DataFrame.from_dict(rows)
-    
-        dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "task_id", "total_seconds", 
-                                                   "platform_id", "cluster_id", "scenario", "logs"])
-        dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
+        common_columns = ["lemonade_id", "task_id", "total_seconds", 
+                          "platform_id", "cluster_id", "scenario", "logs"]
+
+        for r in jobs_objects:
+            common_info = [r[i] for i in range(operations_idx)] + [r[logs_idx]]
+            common_info = {k:v for k, v in zip(common_columns, common_info)}
+
+            for slug, op in r[operations_idx].items():
+                    
+                row = common_info.copy()
+                features = op.gen_model()
+                for param, v in features.items():
+                    row["{}-{}".format(slug, param)] = v
+                
+                rows.append(row)
+
+        dataflow = pd.DataFrame.from_dict(rows)
         dataflow = dataflow.fillna(0)
         dataflow["total_seconds"] = dataflow["total_seconds"].replace(0.00, 0.001)
+        
+        # for idx, r in enumerate(tmp):
+        #     t = [r[i] for i in range(operations_idx)] + [r[logs_idx]]
+        #     dataflow.append(t)
+            
+        #     row = {}
+        #     for slug, op in r[operations_idx].items():
+
+        #         f1 = op.gen_model(platform_target=1)
+        #         f4 = op.gen_model(platform_target=4)
+        #         f6 = op.gen_model(platform_target=6)
+
+        #         for param, v in f1.items():
+        #             row["{}-spark-{}".format(slug, param)] = v
+
+        #         for param, v in f4.items():
+        #             row["{}-pandas-{}".format(slug, param)] = v
+
+        #         for param, v in f6.items():
+        #             row["{}-cudf-{}".format(slug, param)] = v
+
+        #     rows.append(row)
+
+        # rows = pd.DataFrame.from_dict(rows)
+    
+        # dataflow = pd.DataFrame(dataflow, columns=["lemonade_id", "task_id", "total_seconds", 
+        #                                            "platform_id", "cluster_id", "scenario", "logs"])
+        # dataflow = pd.merge(dataflow, rows, how='inner', left_index=True, right_index=True)
+        # dataflow = dataflow.fillna(0)
+        # dataflow["total_seconds"] = dataflow["total_seconds"].replace(0.00, 0.001)
 
         return dataflow
 
@@ -303,7 +324,7 @@ class CostModel(object):
         tmp = []
         for lj in jobs_to_gen.values():
             try:
-                jobs = lj.get_dataflow("v5")
+                jobs = lj.get_dataflow()
                 graph = lj.graph
                 if jobs:
                     for d in jobs:
@@ -334,6 +355,7 @@ class CostModel(object):
                     row['input-rows'] = op.total_input_rows
                     f1 = op.gen_model(platform_target=1)
                     f4 = op.gen_model(platform_target=4)
+                    f6 = op.gen_model(platform_target=6)
                 except Exception as e:
                     print(op.input)
                     print(op.output)
@@ -343,8 +365,13 @@ class CostModel(object):
                     
                 for param, v in f1.items():
                     row["{}-spark-{}".format(slug, param)] = v
+
                 for param, v in f4.items():
                     row["{}-pandas-{}".format(slug, param)] = v
+
+                for param, v in f6.items():
+                    row["{}-cudf-{}".format(slug, param)] = v
+
             rows.append(row)
 
         

@@ -171,6 +171,10 @@ class OperationModel(object):
     PHYSICAL_BEHAVIOR_RANGE = "wide-range-partitioning"
 
     PHYSICAL_BEHAVIOR_ML = "complex-ml"
+
+    PLATFORM_SPARK = 1
+    PLATFORM_PANDAS = 4
+    PLATFORM_CUDF  = 6
     
     debug = False
     
@@ -179,7 +183,7 @@ class OperationModel(object):
         
         self.behavior = None
         self.parameters = parameters
-        self.platform_base = 1 if self.parameters["operation_id"] < 1000 else 4
+        # self.platform_base = 1 if self.parameters["operation_id"] < 1000 else 4
         self.platform_target = self.get_platform_target()
 
     def convert(self, parameters):
@@ -201,10 +205,12 @@ class OperationModel(object):
 
 
     def get_platform_target(self):
-        if "task" in self.parameters:
-            platform_id = self.parameters["task"]["forms"].get("comment", {"value": -1})["value"]
-        else:
-            platform_id = "6"
+        platform_id = int(self.parameters["task"]["forms"].get("comment", {"value": -1})["value"])
+        # if "task" in self.parameters:
+        #    platform_id = int(self.parameters["task"]["forms"].get("comment", {"value": -1})["value"])
+        # else:
+        #     platform_id = -1
+
         return platform_id
 
     def convert(self, platform_id=None):
@@ -289,7 +295,7 @@ class AddColumnsOperationModel(GenericOperationModel):
             "output_n_rows": self.output.n_rows,
             #'n_rows_columns': (self.input[0].n_rows + self.input[1].n_rows)
             #"n_columns": self.output.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -357,7 +363,7 @@ class AddRowsOperationModel(GenericOperationModel):
             #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_columns": self.output.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -468,7 +474,7 @@ class AggregationOperationModel(OperationModel):
             # "output_size_bytes_memory": self.output.size_bytes_memory,
             "data_ratio": self.input.n_rows / self.output.n_rows,
             "n_functions": self.n_functions,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -619,7 +625,7 @@ class CleanMissingOperationModel(OperationModel):
             "output_n_rows": self.output.n_rows,
             "reduced_ratio": self.input.n_rows / self.output.n_rows,
             "n_attributes": self.n_subset,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -651,7 +657,7 @@ class DataReaderOperationModel(OperationModel):
             #"size_megabytes_disk": self.output.size_megabytes_disk,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_columns": self.output.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -683,23 +689,26 @@ class DataWriterOperationModel(OperationModel):
             "input_n_rows": self.input.n_rows,
             "n_columns": self.output.n_columns,
             #n_rows_plus_columns': self.output.n_rows * self.output.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
     
 class DataMigrationOperationModel(OperationModel):
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
-        self.features = {}
         
         self.behavior = self.PHYSICAL_BEHAVIOR_WRITE
         self.n_input = 0
         self.n_output = 1
         self.output = None
 
+        self.features = {
+            'source_engine': int(parameters.get("source_engine", -1))
+        }
+
+
     def convert(self, platform_id=None):
         parameters = self.parameters.copy()
-        self.origin = parameters.get("origin_platform", -1)
         return parameters
 
     def estimate_output(self, base_statistics):
@@ -715,7 +724,9 @@ class DataMigrationOperationModel(OperationModel):
             #'target_platform': self.platform_target,
             "n_rows": self.output.n_rows,
             #"n_columns": self.output.n_columns,
-            "platform_id": "1" if self.platform_target == "4" else "4"
+            # "platform_id": self.platform_target,
+            'source_engine': self.features['source_engine'],
+            'target_engine': self.platform_target,
         }
     
 
@@ -822,7 +833,7 @@ class FeatureIndexerOperationModel(OperationModel):
 
         return {
             "n_rows": self.input.n_rows,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1020,7 +1031,7 @@ class FilterSelectionOperationModel(OperationModel):
             #"output_n_rows": self.output.n_rows,
             #"ratio": self.output.n_rows / self.input.n_rows,
             'n_expressions': self.n_expressions,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1268,24 +1279,24 @@ class JoinOperationModel(OperationModel):
         ds = [v for v in [self.input1.size_bytes_memory, self.input2.size_bytes_memory] if v >= (128*(1024*1024))]
         join_implementation = len(ds)
 
-        if platform_target == 4:
+        if platform_target == self.PLATFORM_PANDAS:
             
             return {
                 "input_size": self.total_input_size_bytes_memory,
                 "output_size": self.output.size_bytes_memory,
                 "join_type": self.join_type,
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
         else:
             return {
                 "input_size": self.total_input_size_bytes_memory,
-                "ooutput_sizeutput": self.output.size_bytes_memory, # ooutput_sizeutput
+                "output_size": self.output.size_bytes_memory, 
                 #"input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
                 #"output_size_bytes_memory": self.output.size_bytes_memory,
                 'join-implementation': join_implementation,
                 "join_type": self.join_type,
                 # 'n_keys': self.n_keys,
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
 
 
@@ -1370,14 +1381,14 @@ class KMeansClusteringOperationModel(OperationModel):
     
     def gen_model(self, platform_target=None):
         
-        if platform_target == 4:
+        if platform_target == self.PLATFORM_PANDAS:
             return {
                 #v1
                 "n_rows": self.input.n_rows,
                 "max_iter":  self.features["max_iter"],
                 'k': self.features['k'],
                 "n_features": len(self.features_col),
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
         else:
             return {
@@ -1386,7 +1397,7 @@ class KMeansClusteringOperationModel(OperationModel):
                 "max_iter":  self.features["max_iter"],
                 'k': self.features['k'],
                 "n_features": len(self.features_col),
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
 
 
@@ -1429,7 +1440,7 @@ class LinearRegressionOperationModel(OperationModel):
         parameters = self.extract_field_value(parameters, "elastic_net")   
         parameters = self.extract_field_value(parameters, "max_iter")  
 
-        if int(platform_id) == 4:
+        if int(platform_id) == self.PLATFORM_PANDAS:
             # to sklearn
             if "elastic_net" in parameters:
                 parameters["alpha"] = parameters["elastic_net"]
@@ -1663,7 +1674,7 @@ class ProjectionOperationModel(OperationModel):
             #"input_size_bytes_memory": self.input.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "ratio_reduction_columns": self.output.n_columns / self.input.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1789,7 +1800,7 @@ class RemoveDuplicatedRowsOperationModel(OperationModel):
             "input_n_rows": self.input.n_rows,
             "output_n_rows": self.output.n_rows,
             "n_attributes": self.n_subset,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1845,7 +1856,7 @@ class ReplaceValueOperationModel(OperationModel):
             "output_n_rows": self.output.n_rows,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_attributes": self.n_subset,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1915,7 +1926,7 @@ class SampleOperationModel(OperationModel):
             "input_n_rows": self.input.n_rows,
             "output_n_rows": self.output.n_rows,
             "reduction_ratio": self.input.n_rows / self.output.n_rows,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -1957,7 +1968,7 @@ class SortOperationModel(OperationModel):
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "n_columns": self.output.n_columns,
             "ratio_key": len(keys) / self.output.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 
@@ -2079,12 +2090,14 @@ class SVMClassificationOperationModel(OperationModel):
             parameters["alias"] = "prediction"
 
         if "value" in parameters.get("max_iter", {}):
-            parameters["max_iter"] = parameters["max_iter"]["value"]
+            parameters["max_iter"] = int(parameters["max_iter"]["value"])
 
         # to spark
         parameters["paramgrid"] = {"max_iter": parameters["max_iter"]}
         # to sklearn
         parameters["kernel"] = "linear"
+
+        self.features['max_iter'] = int(parameters['max_iter'])
         return parameters
 
 
@@ -2114,25 +2127,25 @@ class SVMClassificationOperationModel(OperationModel):
     
     def gen_model(self, platform_target=None):
         col1 = (self.input.n_rows**2) * len(self.features_col)**(1/5)
-        col2 = ((self.features["max_iter"]/100)**3) #.7182
+        col2 = ((self.features['max_iter']/100)**3) #.7182
         
-        if platform_target == 4:
+        if platform_target == self.PLATFORM_PANDAS:
             return {
                 #v1
                 "n_rows": self.input.n_rows,
-                "max_iter":  self.features["max_iter"],
+                "max_iter":  self.features['max_iter'],
                 #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
                 "n_features": len(self.features_col), #**(1/5),
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
         else:
             return {
                 #v1
                  "n_rows": self.input.n_rows,
-                "max_iter":  self.features["max_iter"],
+                "max_iter":  self.features['max_iter'],
                 #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
                 "n_features": len(self.features_col),#**(1/5),
-                "platform_id": self.platform_target
+                "target_engine": self.platform_target
             }
 
 
@@ -2221,7 +2234,7 @@ class TransformationOperationModel(OperationModel):
             "n_rows_plus_columns": self.n_columns,
             'n_overwrite_column': self.overwrite,
             #"n_used_columns": self.n_columns,
-            "platform_id": self.platform_target
+            "target_engine": self.platform_target
         }
 
 

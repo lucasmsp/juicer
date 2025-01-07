@@ -637,28 +637,7 @@ class LemonadeJob(object):
                 self.jobs.pop(j, None)
                 
                 
-    def get_dataflow(self, v="v5", base_calibration=True):
-
-        if v == "v5":
-            return self._gen_dataflow_v5(base_calibration)
-
-    def find_jobs_order(self):
-        tasks = re.findall("task_futures\[\'.*\] = ", self.stand.get('source_code', ""))
-        orders = []
-        if tasks:
-            for i, t in enumerate(tasks):
-                t = t[14:-5]
-                for j, job in enumerate(self.jobs):
-                    tasks = self.jobs[job]["tasks"]
-                    if t in str(tasks):
-                        if job not in orders:
-                            orders.append(job)
-        else:
-            orders = sorted(list(self.jobs.keys()))
-        return orders
-
-    def _gen_dataflow_v5(self, base_calibration=True):
-
+    def get_dataflow(self, base_calibration=True):
         task_orders = self.find_jobs_order()
 
         task_idx = 1
@@ -750,3 +729,19 @@ class LemonadeJob(object):
                     dataflow[order_job][scenario_idx] = slug
 
         return dataflow
+
+
+    def find_jobs_order(self):
+        tasks = re.findall("task_futures\[\'.*\] = ", self.stand.get('source_code', ""))
+        orders = []
+        if tasks:
+            for i, t in enumerate(tasks):
+                t = t[14:-5]
+                for j, job in enumerate(self.jobs):
+                    tasks = self.jobs[job]["tasks"]
+                    if t in str(tasks):
+                        if job not in orders:
+                            orders.append(job)
+        else:
+            orders = sorted(list(self.jobs.keys()))
+        return orders

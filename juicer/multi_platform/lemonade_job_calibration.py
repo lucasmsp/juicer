@@ -221,7 +221,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                 duration = 0.01
             self.jobs[job_id]["total_seconds"] = duration
 
-    def _gen_dataflow_v5(self, base_calibration=True):
+    def get_dataflow(self, base_calibration=True):
         """
         
         Ideia: `total_seconds` - (tarefas nao interessantes)
@@ -238,7 +238,6 @@ class HistoricalLemonadeJob(LemonadeJob):
         is_not_calibration = "dc_w" not in self.workflow["name"]
         if is_not_calibration and base_calibration:
             return 
-        
         
         if base_calibration:
             scenario = self.workflow["name"].split("_")[1][1:]
@@ -278,7 +277,7 @@ class HistoricalLemonadeJob(LemonadeJob):
                                    cluster_id,                              # cluster_id
                                    scenario,                                # scenario
                                    {},                                      # operations
-                                   {"to-remove": 0, 'target-platform': ''}  # log 
+                                   {"to-remove": 0}  # log 
                                    ]
 
             tasks = self.jobs[job_id]["tasks"]
@@ -315,12 +314,15 @@ class HistoricalLemonadeJob(LemonadeJob):
                         
                     elif (scenario == 'data-migration') and (slug == 'data-writer'):
                         p = operation.parameters
+                        parent_task_id = p['task']['parents']['input data']
+                        p['source_engine'] = self.graph.nodes[parent_task_id]['attr_dict']['forms']['comment']['value']
+                        
                         new_op = self.operation_api.all_operations[scenario](p)
                         dataflow[order_job][operations_idx][scenario] = new_op
                         tasks_to_remove.add(task_id)
 
                         dataflow[order_job][time_idx] = self.execution_time
-                        
+
                     elif slug != 'data-writer':
                         #print(f"Removing {task_id} -> {slug}")
                         tasks_to_remove.add(task_id)
@@ -361,7 +363,13 @@ class HistoricalLemonadeJob(LemonadeJob):
                 #print(f"Minus {time_to_remove} (task: {task_id})")
                 dataflow[order_job][log_idx]["to-remove"] += time_to_remove
                 #dataflow[order_job][time_idx] -= time_to_remove
-                dataflow[order_job][log_idx]['target-platform'] = self.graph.nodes[task_id]['attr_dict']['forms']['comment']['value']
+
+                # if scenario == 'data-migration' and self.graph.nodes[task_id]['operation']['slug'] == 'data-reader':
+                #     # in case of data-migration, the target-platform is the platform in data-writer
+                #     dataflow[order_job][log_idx]['source-engine'] = self.graph.nodes[task_id]['attr_dict']['forms']['comment']['value']
+
+                # # in case of data-migration, the target-platform is the platform in data-writer
+                # dataflow[order_job][log_idx]['target-engine'] = self.graph.nodes[task_id]['attr_dict']['forms']['comment']['value']
             
             
             if dataflow[order_job][time_idx] < 0:
