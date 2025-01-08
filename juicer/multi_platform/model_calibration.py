@@ -364,13 +364,13 @@ class CostModel(object):
                     traceback.print_exc()
                     
                 for param, v in f1.items():
-                    row["{}-spark-{}".format(slug, param)] = v
+                    row["{}-{}-spark".format(slug, param)] = v
 
                 for param, v in f4.items():
-                    row["{}-pandas-{}".format(slug, param)] = v
+                    row["{}-{}-pandas".format(slug, param)] = v
 
                 for param, v in f6.items():
-                    row["{}-cudf-{}".format(slug, param)] = v
+                    row["{}-{}-cudf".format(slug, param)] = v
 
             rows.append(row)
 
