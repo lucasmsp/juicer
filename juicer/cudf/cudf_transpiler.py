@@ -60,7 +60,7 @@ class CuDFTranspiler(Transpiler):
             'drop': etl.DropOperation,
             'execute-python': etl.ExecutePythonOperation,
             'execute-sql': etl.ExecuteSQLOperation,
-            'filter-selection': etl.FilterOperation,
+            'filter-selection': cudf_etl.FilterOperation,
             'join': cudf_etl.JoinOperation,
             'k-fold': etl.SplitKFoldOperation,
             'locality-sensitive-hashing': feature_extraction.LSHOperation,

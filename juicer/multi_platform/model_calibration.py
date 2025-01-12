@@ -274,9 +274,17 @@ class CostModel(object):
             for slug, op in r[operations_idx].items():
                     
                 row = common_info.copy()
-                features = op.gen_model()
+                features = op.gen_model(platform_target=1)
                 for param, v in features.items():
-                    row["{}-{}".format(slug, param)] = v
+                    row["{}-{}-spark".format(slug, param)] = v
+
+                features = op.gen_model(platform_target=4)
+                for param, v in features.items():
+                    row["{}-{}-pandas".format(slug, param)] = v
+                
+                features = op.gen_model(platform_target=6)
+                for param, v in features.items():
+                    row["{}-{}-cudf".format(slug, param)] = v
                 
                 rows.append(row)
 

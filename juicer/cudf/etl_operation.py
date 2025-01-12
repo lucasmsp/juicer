@@ -4,8 +4,77 @@ from gettext import gettext
 from textwrap import dedent
 
 from juicer.operation import Operation
-from juicer.scikit_learn.expression import Expression
+from juicer.cudf.expression import Expression
 
+
+class FilterOperation(Operation):
+    """
+    Filters rows using the given condition.
+    Parameters:
+        - The expression (==, <, >)
+    """
+    FILTER_PARAM = 'filter'
+    ADVANCED_FILTER_PARAM = 'expression'
+
+    def __init__(self, parameters, named_inputs, named_outputs):
+        Operation.__init__(self, parameters, named_inputs, named_outputs)
+
+        if self.FILTER_PARAM not in parameters and self.ADVANCED_FILTER_PARAM \
+                not in parameters:
+            raise ValueError(
+                _("Parameter '{}' must be informed for task {}".format(
+                    self.FILTER_PARAM, self.__class__)))
+
+        self.advanced_filter = parameters.get(self.ADVANCED_FILTER_PARAM) or []
+        self.filter = parameters.get(self.FILTER_PARAM) or []
+
+        self.has_code = len(named_inputs) > 0 and any(
+            [len(self.named_outputs) > 0, self.contains_results()])
+        self.output = self.named_outputs.get('output data',
+                                             'out_{}'.format(self.order))
+
+    def generate_code(self):
+        if self.has_code:
+            input_data = self.named_inputs['input data']
+            params = {'input': input_data}
+
+            filters = [
+                "{0} {1} {2}".format(f['attribute'], f['f'],
+                                       f.get('value', f.get('alias')))
+                for f in self.filter]
+
+            code = """
+            {out} = {input}""".format(out=self.output,
+                                      input=self.named_inputs['input data'])
+
+            expressions = []
+            for i, expr in enumerate(self.advanced_filter):
+                expression = Expression(expr['tree'], params)
+                expressions.append(expression.parsed_expression)
+
+            if len(expressions) > 0:
+                for e in expressions:
+                    code += """
+            {out} = {out}[{out}.apply({expr}, axis=1)]"""\
+                    .replace(
+                        "{out} = {out}[{out}.apply(", 
+                        "{out} = {out}.loc[")\
+                    .replace(
+                        ", axis=1)", 
+                        "")\
+                    .format(out=self.output, expr=e)\
+                    .replace("lambda row:", "")\
+                    .replace("row[", self.output+"[")
+
+            indentation = " and "
+            if len(filters) > 0:
+                code += """
+            {out} = {out}.query('{f}')""".format(out=self.output,
+                                                 f=indentation.join(filters))
+
+            return dedent(code)
+
+            
 class JoinOperation(Operation):
     """
     Joins with another DataFrame, using the given join expression.

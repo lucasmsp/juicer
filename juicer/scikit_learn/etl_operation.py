@@ -96,6 +96,7 @@ class AggregationOperation(Operation):
             'min': "min",
             'sum': "sum",
             'size': "size",
+            'countDistinct': 'nunique'
         }
 
         for dictionary in self.functions:
