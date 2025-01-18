@@ -812,19 +812,19 @@ class FeatureIndexerOperationModel(OperationModel):
         self.total_input_rows = self.input.n_rows
 
         parameters = self.convert()
-        print("FeatureIndexerOperationModel:", parameters)
         self.features_col = parameters["attributes"]
-        # Por enquanto, rodar 1 coluna por vez
-        n_distinct_values = self.input.columns[self.features_col].distinct_values
-        
-        self.output.create_new_column(**{
-            "name": parameters["alias"],
-            "type": "DOUBLE",
-            "missing_total": 0,
-            'distinct_columns': n_distinct_values,
-            'min_value': 0,
-            'max_value': n_distinct_values
-        })
+        new_cols = parameters["alias"].split(",")
+
+        for col, new_col in zip(self.features_col, new_cols):
+            n_distinct_values = self.input.columns[col].distinct_values
+            self.output.create_new_column(**{
+                "name": new_col,
+                "type": "DOUBLE",
+                "missing_total": 0,
+                'distinct_columns': n_distinct_values,
+                'min_value': 0,
+                'max_value': n_distinct_values
+            })
         self.output.recalculate()
 
         return [self.output]
@@ -833,9 +833,9 @@ class FeatureIndexerOperationModel(OperationModel):
 
         return {
             "n_rows": self.input.n_rows,
+            "n_features": len(self.features_col),
             "target_engine": self.platform_target
         }
-
 
 class FilterSelectionOperationModel(OperationModel):
     def __init__(self, parameters):
@@ -1430,7 +1430,7 @@ class LinearRegressionOperationModel(OperationModel):
         self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
 
-    def convert(self, platform_id=None):
+    def convert(self, platform_id=-1):
         parameters = self.parameters.copy()
         #print('LogisticRegressionOperationModel: ', parameters)
 
@@ -1440,10 +1440,12 @@ class LinearRegressionOperationModel(OperationModel):
         parameters = self.extract_field_value(parameters, "elastic_net")   
         parameters = self.extract_field_value(parameters, "max_iter")  
 
+
         if int(platform_id) == self.PLATFORM_PANDAS:
             # to sklearn
             if "elastic_net" in parameters:
                 parameters["alpha"] = parameters["elastic_net"]
+        
         return parameters
     
     def estimate_output(self, base_statistics):
@@ -1454,19 +1456,30 @@ class LinearRegressionOperationModel(OperationModel):
 
         parameters = self.convert()
         self.features_col = parameters["features"]
-        self.label = parameters['label']
+        self.label = parameters['label'][0]
+        self.features['max_iter'] = parameters.get("max_iter", 100)
         
         self.output.create_new_column(**{
-            "name": parameters["alias"],
+            "name": parameters.get("prediction","prediction"),
             "type": "DOUBLE",
             "missing_total": 0,
             'distinct_columns': self.input.columns[self.label].distinct_values,
-            'min_value': self.input.columns[self.label].min,
-            'max_value': self.input.columns[self.label].max
+            'min_value': self.input.columns[self.label].min_value,
+            'max_value': self.input.columns[self.label].max_value
         })
         self.output.recalculate()
 
         return [self.output]
+
+    def gen_model(self, platform_target=None):
+        
+        return {
+            #v1
+            "n_rows": self.input.n_rows,
+            "max_iter":  self.features["max_iter"],
+            "n_features": len(self.features_col),
+            "target_engine": self.platform_target
+        }
 
 
 class LogisticRegressionOperationModel(OperationModel):
@@ -1564,9 +1577,11 @@ class MinMaxOperationModel(GenericOperationModel):
         parameters = self.parameters.copy()
 
         parameters = self.extract_field_value(parameters, "attribute")
+        parameters = self.extract_field_value(parameters, "attributes")
         parameters = self.extract_field_value(parameters, "alias")
 
-        parameters['attributes'] = parameters['attribute']
+        if "attribute" in parameters:
+            parameters['attributes'] = parameters['attribute']
 
         return parameters
 
@@ -1577,21 +1592,32 @@ class MinMaxOperationModel(GenericOperationModel):
         self.total_input_rows = self.input.n_rows
 
         parameters = self.convert()
-        self.features_col = parameters["features"]
-        self.label = parameters['label']
-        n_distinct_values = self.input.columns[self.label].distinct_values
-        
-        self.output.create_new_column(**{
-            "name": parameters["alias"],
-            "type": "DOUBLE",
-            "missing_total": 0,
-            'distinct_columns': n_distinct_values,
-            'min_value': 0,
-            'max_value': n_distinct_values
-        })
+        self.features_col = parameters["attributes"]
+        new_cols = parameters['alias'].split(",")
+
+        for new_col, col in zip(new_cols, self.features_col):
+
+            self.output.create_new_column(**{
+                "name": new_col,
+                "type": "DOUBLE",
+                "missing_total": 0,
+                'distinct_columns': self.input.columns[col].distinct_values,
+                'min_value': 0,
+                'max_value': 1
+            })
+
         self.output.recalculate()
 
         return [self.output]
+
+    def gen_model(self, platform_target=None):
+        
+        return {
+            #v1
+            "n_rows": self.input.n_rows,
+            "n_features": len(self.features_col),
+            "target_engine": self.platform_target
+        }
 
 
 

@@ -493,10 +493,10 @@ class LimoneroCalibration(object):
         self.load_id()
 
         self.config = config
-        self.mysql_host = self.config['thesis']['mysql_host']
-        self.mysql_port = self.config['thesis']['mysql_port']
-        self.limonero_host = self.config['thesis']['limonero_host']
-        self.limonero_port = self.config['thesis']['limonero_port']
+        self.mysql_host = self.config['juicer']['thesis']['mysql_host']
+        self.mysql_port = self.config['juicer']['thesis']['mysql_port']
+        self.limonero_host = self.config['juicer']['thesis']['limonero_host']
+        self.limonero_port = self.config['juicer']['thesis']['limonero_port']
 
     def save_id(self, datasource_id):
         with open("/tmp/limonero_info.txt", "w") as f:
@@ -599,6 +599,8 @@ class LimoneroCalibration(object):
                 n_out = {'output data': 'df'}
                 data_reader = DataReaderOperation(parameters, named_inputs={}, named_outputs=n_out)
                 code = "from pyspark.sql import types\n"+data_reader.generate_code()
+                # TODO: FIX THIS
+                code = code.replace("/srv/datasets/", "/scratch/lucasmsp/datasets/")
                 code = code[:code.rfind('\n')]
                 _locals = locals()
                 exec(code, globals(), _locals)
@@ -663,9 +665,12 @@ class LimoneroCalibration(object):
                                                 
                         deciles = gen_deciles_string(c, df, min_value, max_value)
                         
-                        min_value = emoji_pattern.sub(r'', min_value)
-                        max_value = emoji_pattern.sub(r'', max_value)
-                        deciles = emoji_pattern.sub(r'', deciles)
+                        try:
+                            min_value = emoji_pattern.sub(r'', min_value)
+                            max_value = emoji_pattern.sub(r'', max_value)
+                            deciles = emoji_pattern.sub(r'', deciles)
+                        except:
+                            print("Error to process string data column.")
                         
                         
                         

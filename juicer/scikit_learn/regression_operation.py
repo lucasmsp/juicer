@@ -643,7 +643,7 @@ class LinearRegressionOperation(Operation):
             code = """    
             algorithm = ElasticNet(alpha={alpha}, l1_ratio={elastic}, tol={tol}, 
                 max_iter={max_iter}, random_state={seed},
-                normalize={normalize}, positive={positive}, 
+                positive={positive}, 
                 fit_intercept={fit_intercept})  
             """.format(max_iter=self.max_iter,
                        alpha=self.alpha,

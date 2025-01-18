@@ -107,12 +107,11 @@ class CostModel(object):
                 current_job_log = pd.DataFrame.from_dict(current_job_log)
 
                 if len(current_job_log[
-                    (current_job_log["level"] != "INFO") |
+                    (~current_job_log["level"].isin(["INFO", 'warning'])) |
                     (current_job_log["l_status"].isin(["ERROR", "PENDING", "CANCELED"])) |
-                    (current_job_log["message"].isin(["Tarefa executando (usando dados em cache)",
-                                                      "Task running (cached data)"]))
+                    (current_job_log["message"].isin(["Tarefa executando (usando dados em cache)", "Task running (cached data)"]))
                 ]) == 0:           
-                    
+
                     if current_job_log["workflow_id"].iloc[0] == 81:
                         idx = current_job_log.index[current_job_log["message"].str.contains("Records:")][0]
                         current_job_log = current_job_log.iloc[0:idx+1]
@@ -144,6 +143,7 @@ class CostModel(object):
                     return current_job_log
 
         self.lemonade_jobs_excluded_by_logs.append(current_job_id)
+
         return None
 
     def data_gathering_one(self, current_job_id, mode="break-by-actions"):
