@@ -469,12 +469,17 @@ class SaveOperation(Operation):
             
             {%- if format == FORMAT_CSV %}
             {%- if scheme == 'hdfs' and not protect %}
-            from io import StringIO
+            # from io import StringIO
+            # with fs.open_output_stream(path) as f:
+            #     s = StringIO()
+            #     {{input}}.to_csv(s, sep=str(','), mode='w',
+            #     header={{header}}, index=False, encoding='utf-8')
+            #     s = s.getvalue().encode()
+            from pyarrow import csv
+            import pyarrow as pa
             with fs.open_output_stream(path) as f:
-                s = StringIO()
-                {{input}}.to_csv(s, sep=str(','), mode='w',
-                header={{header}}, index=False, encoding='utf-8')
-                f.write(s.getvalue().encode())               
+                csv.write_csv(pa.Table.from_pandas({{input}}), f)
+
             {%- elif scheme == 'file' or protect %}
             {{input}}.to_csv(path, sep=str(','), mode='w',
             header={{header}}, index=False, encoding='utf-8')

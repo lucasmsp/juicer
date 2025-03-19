@@ -256,6 +256,7 @@ def {{task.operation.slug.replace('-', '_')}}_{{instance.order}}(spark_session, 
     {%- endif %}
     {%- if instance.has_code and instance.enabled and instance.contains_schema %}
     for name, out in outputs:
+        out.persist()
         n_rows = out.count()
         emit_event(name='update task', message=_('Records in this output: '+str(n_rows)),
                identifier=task_id, status='RUNNING')

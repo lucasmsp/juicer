@@ -352,12 +352,17 @@ class AddRowsOperationModel(GenericOperationModel):
             self.output.update_column(key, values)
 
         self.output.recalculate()
+
+        # for c in self.output.columns:
+        #     print(f"AddRowsOperationModel input1 | {c}", self.input[0].columns[c].deciles)
+        #     print(f"AddRowsOperationModel input2 | {c}", self.input[1].columns[c].deciles)
+        #     print(f"AddRowsOperationModel output | {c}", self.output.columns[c].deciles)
         return [self.output]
 
     def gen_model(self, platform_target=None):
 
         return {
-             "input_n_rows": self.input[0].n_rows + self.input[1].n_rows,
+            "input_n_rows": self.input[0].n_rows + self.input[1].n_rows,
             "output_n_rows": self.output.n_rows,
             # "input_size_bytes_memory": 
             #     self.input[0].size_bytes_memory + self.input[1].size_bytes_memory,
@@ -407,9 +412,10 @@ class AggregationOperationModel(OperationModel):
 
         for k in keys:
             distinct_values.append(self.input.columns[k].distinct_values)
+            #print(f"AggregationOperationModel | col {k} = {self.input.columns[k].distinct_values}")
 
         distinct_values = max(distinct_values)
-
+        #print("AggregationOperationModel | distinct_values: ", distinct_values)
         
         self.output = BaseStatistics(n_rows=distinct_values)
 
@@ -417,7 +423,9 @@ class AggregationOperationModel(OperationModel):
             self.output.columns[k] = copy.deepcopy(base_statistics[0].columns[k])
             self.output.update_column(k, {"n_rows": distinct_values, "missing_total": 0})
             if self.output.columns[k].deciles:
-                self.output.columns[k].deciles = {k: 1 for k in self.output.columns[k].deciles}
+                sum_var = sum(self.output.columns[k].deciles.values())
+                reduction_factor = distinct_values/sum_var
+                self.output.columns[k].deciles = {k: int(v*reduction_factor) for k, v in self.output.columns[k].deciles.items()}
             
             
         for row in parameters["function"]:
@@ -459,20 +467,23 @@ class AggregationOperationModel(OperationModel):
             self.n_functions += 1
 
         self.output.recalculate()
+        #self.debug=True
         if self.debug:
-            print("AggregationOperationModel | ", self.output)
-            print("AggregationOperationModel | columns:", self.output.columns)
+            #print("AggregationOperationModel | ", self.output)
+            #print("AggregationOperationModel | columns:", self.output.columns)
+            for c in self.input.columns:
+                print(f"AggregationOperationModel | input column {c}:", self.input.columns[c].deciles)
             for c in self.output.columns:
-                print(f"AggregationOperationModel | deciles column {c}:", self.output.columns[c].deciles)
+                print(f"AggregationOperationModel | output column {c}:", self.output.columns[c].deciles)
         return [self.output]
 
     def gen_model(self, platform_target=None):
         return {
             "input_n_rows": self.input.n_rows,
-            "output_n_rows": self.output.n_rows,
+            #"output_n_rows": self.output.n_rows,
             # "input_size_bytes_memory": self.input.size_bytes_memory,
             # "output_size_bytes_memory": self.output.size_bytes_memory,
-            "data_ratio": self.input.n_rows / self.output.n_rows,
+            # "data_ratio": self.input.n_rows / self.output.n_rows,
             "n_functions": self.n_functions,
             "target_engine": self.platform_target
         }
@@ -508,7 +519,7 @@ class ApplyModelOperationModel(GenericOperationModel):
                 "name": self.label,
                 "type": "DOUBLE",
                 "missing_total": 0,
-                'distinct_columns': self.col_label_trained.distinct_values,
+                'distinct_values': self.col_label_trained.distinct_values,
                 'min_value': self.col_label_trained.min,
                 'max_value': self.col_label_trained.max
             })
@@ -517,7 +528,7 @@ class ApplyModelOperationModel(GenericOperationModel):
                 "name": self.label,
                 "type": "DOUBLE",
                 "missing_total": 0,
-                'distinct_columns': self.total_input_rows*0.10,
+                'distinct_values': self.total_input_rows*0.10,
                 'min_value': 0,
                 'max_value': 1
             })
@@ -563,6 +574,7 @@ class CleanMissingOperationModel(OperationModel):
         self.output = None
         self.n_subset = None
         self.mode = self.parameters.get("cleaning_mode", "REMOVE_ROW")
+
 
     def convert(self, platform_id=None):
         parameters = self.parameters.copy()
@@ -617,16 +629,25 @@ class CleanMissingOperationModel(OperationModel):
         return [self.output]
 
     def gen_model(self, platform_target=None):
-
-        return {
+        
+        r = {
             #"input_size_bytes_memory": self.input.size_bytes_memory,
             #"output_size_bytes_memory": self.output.size_bytes_memory,
             "input_n_rows": self.input.n_rows,
             "output_n_rows": self.output.n_rows,
             "reduced_ratio": self.input.n_rows / self.output.n_rows,
             "n_attributes": self.n_subset,
-            "target_engine": self.platform_target
+            "target_engine": self.platform_target,
+            'mode_value': 0,
+            'mode_median': 0,
+            'mode_mean': 0,
+            'mode_remove_row': 0,
+            'mode_remove_column': 0
         }
+        r["mode_" + self.mode.lower()] = 1
+
+        return r
+
 
 
 class DataReaderOperationModel(OperationModel):
@@ -652,13 +673,43 @@ class DataReaderOperationModel(OperationModel):
         return [self.output]
 
     def gen_model(self, platform_target=None):
-        return {
-            "output_n_rows": self.output.n_rows,
-            #"size_megabytes_disk": self.output.size_megabytes_disk,
-            #"output_size_bytes_memory": self.output.size_bytes_memory,
-            "n_columns": self.output.n_columns,
-            "target_engine": self.platform_target
+        # 1. Deixar só o # de linhas é pouca informação
+        # 2. Deixar o # de linhas e # colunas não é bem tratado pelos modelos, pq as informações são relacionadas
+        # 3. Deixar o # de linhas * # colunas nao pega bem alguns casos.... pq cria valores muito extremos
+        # 4. Deixar  o bytes ainda é a melhor opção, mas erra em alguns casos
+        r =  {
+             "target_engine": self.platform_target,
+             "string": 0,
+             "date": 0,
+             "number": 0
         }
+        for c in self.output.columns.values():
+            if c.type in ["TEXT", "CHARACTER"]:
+                r['string'] += 1
+            elif c.type in ['DATE', 'DATETIME']:
+                r['date'] += 1
+            else:
+                r['number'] += 1
+
+
+        r['string'] *= self.output.n_rows
+        r['date'] *= self.output.n_rows
+        r['number'] *= self.output.n_rows
+
+
+        return r
+        
+
+        # return {
+        #     #"output_n_rows": self.output.n_rows,
+        #     #"size_megabytes_disk": self.output.size_megabytes_disk,
+        #     "output_size_bytes_memory": self.output.n_rows * self.output.n_columns,
+            
+        #     #self.output.size_bytes_memory,
+        #     #"n_columns": self.output.n_columns,
+
+        #     "target_engine": self.platform_target
+        # }
 
 
 class DataWriterOperationModel(OperationModel):
@@ -686,8 +737,9 @@ class DataWriterOperationModel(OperationModel):
 
     def gen_model(self, platform_target=None):
         return {
-            "input_n_rows": self.input.n_rows,
-            "n_columns": self.output.n_columns,
+            "output_size_bytes_memory": self.input.n_rows * self.input.n_columns, #self.total_input_size_bytes_memory,
+            #"input_n_rows": self.input.n_rows,
+            #"n_columns": self.output.n_columns,
             #n_rows_plus_columns': self.output.n_rows * self.output.n_columns,
             "target_engine": self.platform_target
         }
@@ -720,9 +772,9 @@ class DataMigrationOperationModel(OperationModel):
 
     def gen_model(self, platform_target=None):
         return {
-            #"input_size_bytes_memory": self.output.size_bytes_memory,
+            "input_size_bytes_memory": self.output.n_rows * self.output.n_columns, # self.output.size_bytes_memory,
             #'target_platform': self.platform_target,
-            "n_rows": self.output.n_rows,
+            # "n_rows": self.output.n_rows,
             #"n_columns": self.output.n_columns,
             # "platform_id": self.platform_target,
             'source_engine': self.features['source_engine'],
@@ -821,7 +873,7 @@ class FeatureIndexerOperationModel(OperationModel):
                 "name": new_col,
                 "type": "DOUBLE",
                 "missing_total": 0,
-                'distinct_columns': n_distinct_values,
+                'distinct_values': n_distinct_values,
                 'min_value': 0,
                 'max_value': n_distinct_values
             })
@@ -832,8 +884,8 @@ class FeatureIndexerOperationModel(OperationModel):
     def gen_model(self, platform_target=None):
 
         return {
-            "n_rows": self.input.n_rows,
-            "n_features": len(self.features_col),
+            "n_rows": self.input.n_rows * len(self.features_col),
+            #"n_features": ,
             "target_engine": self.platform_target
         }
 
@@ -1009,7 +1061,8 @@ class FilterSelectionOperationModel(OperationModel):
         self.output.remove_n_rows(to_remove) 
         self.output.recalculate() 
         #print("after:", self.output.n_rows)
-        
+
+
         if self.debug:
             print(f"FilterSelectionOperationModel | ", self.output)
             self.output.print_all_columns()
@@ -1098,8 +1151,57 @@ class HuberRegressorOperationModel(OperationModel):
 
 class IsotonicRegressionOperationModel(GenericOperationModel):
     def __init__(self, parameters):
-        GenericOperationModel.__init__(self, parameters)
+        OperationModel.__init__(self, parameters)
+        self.features = {}
         self.behavior = self.PHYSICAL_BEHAVIOR_ML
+
+    def convert(self, platform_id=-1):
+        parameters = self.parameters.copy()
+        # print('IsotonicRegressionOperationModel: ', parameters)
+
+        parameters = self.extract_field_value(parameters, "features")
+        parameters = self.extract_field_value(parameters, "label")
+        parameters = self.extract_field_value(parameters, "prediction")
+        parameters = self.extract_field_value(parameters, "elastic_net")   
+        parameters = self.extract_field_value(parameters, "max_iter")  
+
+
+        if int(platform_id) == self.PLATFORM_PANDAS:
+            # to sklearn
+            if "elastic_net" in parameters:
+                parameters["alpha"] = parameters["elastic_net"]
+        
+        return parameters
+    
+    def estimate_output(self, base_statistics):
+        self.input = copy.deepcopy(base_statistics[0])
+        self.output = copy.deepcopy(base_statistics[0])
+        self.total_input_size_bytes_memory = self.input.size_bytes_memory
+        self.total_input_rows = self.input.n_rows
+
+        parameters = self.convert()
+        self.features_col = parameters["features"]
+        self.label = parameters['label'][0]
+        self.features['max_iter'] = parameters.get("max_iter", 100)
+        
+        self.output.create_new_column(**{
+            "name": parameters.get("prediction","prediction"),
+            "type": "DOUBLE",
+            "missing_total": 0,
+            'distinct_values': self.input.columns[self.label].distinct_values,
+            'min_value': self.input.columns[self.label].min_value,
+            'max_value': self.input.columns[self.label].max_value
+        })
+        self.output.recalculate()
+
+        return [self.output]
+
+    def gen_model(self, platform_target=None):
+        return {
+            "n_rows": self.input.n_rows,
+            "max_iter":  self.features["max_iter"],
+            "target_engine": self.platform_target
+        }
 
 
 class JoinOperationModel(OperationModel):
@@ -1192,7 +1294,16 @@ class JoinOperationModel(OperationModel):
                     distinct_factor_l = self.input1.columns[l].get_elements_interval(interval_overlap) /  distinct_l
                     distinct_factor_r = self.input2.columns[r].get_elements_interval(interval_overlap) / distinct_r
                     
-                    n_rows =  (distinct_factor_l * distinct_factor_r) * min([distinct_l, distinct_r])
+                    n_rows =  int((distinct_factor_l * distinct_factor_r) * min([distinct_l, distinct_r]))
+                    # print(f"""
+                    # overlap {interval_overlap}
+                    # Distinct L {distinct_l}  - factor {distinct_factor_l} - elements {self.input1.columns[l].get_elements_interval(interval_overlap)}
+                    # Distinct R {distinct_r}  - factor {distinct_factor_r} - elements {self.input2.columns[r].get_elements_interval(interval_overlap)}
+                    # L {self.input1.n_rows} - deciles {self.input1.columns[l].deciles}
+                    # R {self.input2.n_rows} - deciles {self.input2.columns[r].deciles}
+                    # rows: {n_rows}
+                    # """)
+                    
                     
                 elif self.input1.columns[l].is_string():
                     deciles1 = self.input1.columns[l].deciles
@@ -1284,6 +1395,8 @@ class JoinOperationModel(OperationModel):
             return {
                 "input_size": self.total_input_size_bytes_memory,
                 "output_size": self.output.size_bytes_memory,
+                #"input_rows": self.input.n_rows,
+                #"reduced_size": self.input.n_rows / self.output.n_rows, 
                 "join_type": self.join_type,
                 "target_engine": self.platform_target
             }
@@ -1291,6 +1404,8 @@ class JoinOperationModel(OperationModel):
             return {
                 "input_size": self.total_input_size_bytes_memory,
                 "output_size": self.output.size_bytes_memory, 
+                #"input_rows": self.input.n_rows,
+                #"reduced_size": self.input.n_rows / self.output.n_rows, 
                 #"input_size_bytes_memory": self.input1.size_bytes_memory + self.input2.size_bytes_memory,
                 #"output_size_bytes_memory": self.output.size_bytes_memory,
                 'join-implementation': join_implementation,
@@ -1384,19 +1499,19 @@ class KMeansClusteringOperationModel(OperationModel):
         if platform_target == self.PLATFORM_PANDAS:
             return {
                 #v1
-                "n_rows": self.input.n_rows,
+                "n_rows": self.input.n_rows * len(self.features_col),
                 "max_iter":  self.features["max_iter"],
                 'k': self.features['k'],
-                "n_features": len(self.features_col),
+                #"n_features": len(self.features_col),
                 "target_engine": self.platform_target
             }
         else:
             return {
                 #v1
-                 "n_rows": self.input.n_rows,
+                 "n_rows": self.input.n_rows * len(self.features_col),
                 "max_iter":  self.features["max_iter"],
                 'k': self.features['k'],
-                "n_features": len(self.features_col),
+                #"n_features": len(self.features_col),
                 "target_engine": self.platform_target
             }
 
@@ -1463,7 +1578,7 @@ class LinearRegressionOperationModel(OperationModel):
             "name": parameters.get("prediction","prediction"),
             "type": "DOUBLE",
             "missing_total": 0,
-            'distinct_columns': self.input.columns[self.label].distinct_values,
+            'distinct_values': self.input.columns[self.label].distinct_values,
             'min_value': self.input.columns[self.label].min_value,
             'max_value': self.input.columns[self.label].max_value
         })
@@ -1475,9 +1590,9 @@ class LinearRegressionOperationModel(OperationModel):
         
         return {
             #v1
-            "n_rows": self.input.n_rows,
+            "n_rows": self.input.n_rows * len(self.features_col),
             "max_iter":  self.features["max_iter"],
-            "n_features": len(self.features_col),
+            #"n_features": len(self.features_col),
             "target_engine": self.platform_target
         }
 
@@ -1518,7 +1633,7 @@ class LogisticRegressionOperationModel(OperationModel):
             "name": parameters["alias"],
             "type": "DOUBLE",
             "missing_total": 0,
-            'distinct_columns': n_distinct_values,
+            'distinct_values': n_distinct_values,
             'min_value': 0,
             'max_value': n_distinct_values
         })
@@ -1558,7 +1673,7 @@ class MaxAbsOperationModel(GenericOperationModel):
             "name": parameters["alias"],
             "type": "DOUBLE",
             "missing_total": 0,
-            'distinct_columns': n_distinct_values,
+            'distinct_values': n_distinct_values,
             'min_value': 0,
             'max_value': n_distinct_values
         })
@@ -1601,7 +1716,7 @@ class MinMaxOperationModel(GenericOperationModel):
                 "name": new_col,
                 "type": "DOUBLE",
                 "missing_total": 0,
-                'distinct_columns': self.input.columns[col].distinct_values,
+                'distinct_values': self.input.columns[col].distinct_values,
                 'min_value': 0,
                 'max_value': 1
             })
@@ -1963,6 +2078,9 @@ class SetIntersectionOperationModel(GenericOperationModel):
 
 
 class SortOperationModel(OperationModel):
+    """
+    A coluna estar ordenavel importa no tempo de execução
+    """
     def __init__(self, parameters):
         OperationModel.__init__(self, parameters)
         self.features = {}
@@ -1990,8 +2108,7 @@ class SortOperationModel(OperationModel):
         keys = parameters["attributes"]
 
         return {
-            "input_n_rows": self.input.n_rows,
-            #"output_size_bytes_memory": self.output.size_bytes_memory,
+            "n_rows": self.input.n_rows,
             "n_columns": self.output.n_columns,
             "ratio_key": len(keys) / self.output.n_columns,
             "target_engine": self.platform_target
@@ -2065,7 +2182,7 @@ class StandardScalerOperationModel(GenericOperationModel):
             "name": parameters["alias"],
             "type": "DOUBLE",
             "missing_total": 0,
-            'distinct_columns': n_distinct_values,
+            'distinct_values': n_distinct_values,
             'min_value': 0,
             'max_value': n_distinct_values
         })
@@ -2143,11 +2260,17 @@ class SVMClassificationOperationModel(OperationModel):
             "name": parameters["alias"],
             "type": "DOUBLE",
             "missing_total": 0,
-            'distinct_columns': 2,
+            'distinct_values': 2,
             'min_value': 0,
             'max_value': 1
         })
+        avg = int(self.input.n_rows/2)
+        self.output.columns[parameters["alias"]].deciles = {0.0: avg, 1.0:avg}
         self.output.recalculate()
+
+        #print(parameters["alias"])
+        #for c in self.output.columns:
+        #    print(f"SVMClassificationOperationModel | output column {c}: distincts {self.output.columns[c].distinct_values} - deciles {self.output.columns[c].deciles}")
 
         return [self.output]
     
@@ -2158,7 +2281,7 @@ class SVMClassificationOperationModel(OperationModel):
         if platform_target == self.PLATFORM_PANDAS:
             return {
                 #v1
-                "n_rows": self.input.n_rows,
+                "n_rows": self.input.n_rows * len(self.features_col),
                 "max_iter":  self.features['max_iter'],
                 #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
                 "n_features": len(self.features_col), #**(1/5),
@@ -2167,10 +2290,10 @@ class SVMClassificationOperationModel(OperationModel):
         else:
             return {
                 #v1
-                 "n_rows": self.input.n_rows,
+                 "n_rows": self.input.n_rows * len(self.features_col),
                 "max_iter":  self.features['max_iter'],
                 #"mix": (np.log(self.input.n_rows)  * col2)/100_000,
-                "n_features": len(self.features_col),#**(1/5),
+                #"n_features": len(self.features_col),#**(1/5),
                 "target_engine": self.platform_target
             }
 
@@ -2213,10 +2336,13 @@ class TransformationOperationModel(OperationModel):
         self.n_columns = 0 
         
         for exp in parameters["expression"]:
+            # print(json.dumps(exp))
             new_col = exp["alias"]
             self.n_columns += (json.dumps(exp).count("Identifier")+1)**2 * self.input.n_rows
+            #self.n_columns += json.dumps(exp).count("Identifier")
             if new_col in self.output.columns:
                 self.overwrite += 1
+
             
             col_name = None
             if "name" in exp["tree"]:
@@ -2227,7 +2353,13 @@ class TransformationOperationModel(OperationModel):
                 col_name = exp["tree"]["right"]["name"]
             elif "name" in exp["tree"].get("arguments", [[]])[0]:
                 col_name = exp["tree"].get("arguments", [[]])[0]["name"]
-            
+
+            if exp['tree'].get('callee', {'name': ""})['name'] == 'lit':
+                raw = exp['tree']['arguments'][0]['value']
+                deciles = {raw: self.output.n_rows}
+            else:
+                deciles = {}
+                
             if col_name:
                 col_object = copy.deepcopy(self.output.columns[col_name])
                 col_object.name = new_col
@@ -2243,12 +2375,15 @@ class TransformationOperationModel(OperationModel):
                     'min_value': 1,
                     'max_value': 1,
                     'distinct_values': 1,
-
+                    'deciles': json.dumps(deciles)
                 })
 
             
 
         self.output.recalculate()
+
+        #for c in self.output.columns:
+        #    print(f"TransformationOperationModel | output column {c}: distincts {self.output.columns[c].distinct_values} - deciles {self.output.columns[c].deciles}")
 
         return [self.output]
 

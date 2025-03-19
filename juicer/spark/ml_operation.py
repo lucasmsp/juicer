@@ -1463,6 +1463,8 @@ class ClassificationModelOperation(DeployModelMixin, Operation):
             {output} = dataframe_util.LazySparkTransformationDataframe(
                 {model}, {train}, call_transform)
 
+            {output} = {output}.drop(*["features_tmp", 'rawPrediction'])
+
             ml_model = {model}
             if display_text:
                 if isinstance(ml_model, PipelineModel):

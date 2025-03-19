@@ -562,7 +562,9 @@ class LimoneroCalibration(object):
         spark_builder = SparkSession.builder.appName('Helper')
         for option, value in app_configs.items():
             spark_builder = spark_builder.config(option, value)
-        spark_session = spark_builder.master("local[*]").getOrCreate()
+            print(f"{option} = {value}")
+        
+        spark_session = spark_builder.config("spark.driver.memory", "30g").master("local[*]").getOrCreate()
 
         datasources = [i for i in range(self.current_datasource_id, self.last_datasource_id)]
         stats = {}
@@ -616,6 +618,7 @@ class LimoneroCalibration(object):
                 dtypes = {k: v for k, v in df.dtypes}
 
                 for c in df.columns:
+                    print(c)
                     col_type = dtypes[c]
                     
                     missing_total = 0
@@ -669,8 +672,9 @@ class LimoneroCalibration(object):
                             min_value = emoji_pattern.sub(r'', min_value)
                             max_value = emoji_pattern.sub(r'', max_value)
                             deciles = emoji_pattern.sub(r'', deciles)
-                        except:
+                        except Exception as e:
                             print("Error to process string data column.")
+                            print(e)
                         
                         
                         

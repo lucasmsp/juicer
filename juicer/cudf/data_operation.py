@@ -102,6 +102,8 @@ class DataReaderOperationCUDF(DataReaderOperation):
             fs = hdfs.HadoopFileSystem('{{parsed.hostname}}', {{parsed.port}}, 
                user='{{extra_params.get('user', parsed.username) or 'hadoop'}}')
             f = fs.open_input_file('{{parsed.path}}')
+            from io import StringIO 
+            f = StringIO(f.readall().decode("utf-8"))
             {%- elif parsed.scheme == 'file' %}
             f = open('{{parsed.path}}', 'rb')
             {%- endif %}
@@ -119,7 +121,10 @@ class DataReaderOperationCUDF(DataReaderOperation):
                                      dtype='str',
                                      {%-   endif %}
                                      na_values={{na_values}})
-            f.close()
+            try:
+                f.close()
+            except:
+                del f
             {%-   if header == 'infer' %}
             {{output}}.columns = ['attr{{i}}'.format(i=i) 
                             for i, _ in enumerate({output}.columns)]
@@ -329,12 +334,17 @@ class SaveOperation(Operation):
             
             {%- if format == FORMAT_CSV %}
             {%- if scheme == 'hdfs' and not protect %}
-            from io import StringIO
+            # from io import StringIO
+            # with fs.open_output_stream(path) as f:
+            #     s = StringIO()
+            #     {{input}}.to_csv(s, sep=str(','), 
+            #     header={{header}}, index=False, encoding='utf-8')
+            #     f.write(s.getvalue().encode()) 
+            from pyarrow import csv
+            import pyarrow as pa
             with fs.open_output_stream(path) as f:
-                s = StringIO()
-                {{input}}.to_csv(s, sep=str(','), 
-                header={{header}}, index=False, encoding='utf-8')
-                f.write(s.getvalue().encode())               
+                csv.write_csv({{input}}.to_arrow(), f)
+                              
             {%- elif scheme == 'file' or protect %}
             {{input}}.to_csv(path, sep=str(','),
             header={{header}}, index=False, encoding='utf-8')
